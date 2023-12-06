@@ -8,7 +8,7 @@ model = keypointrcnn_resnet50_fpn(pretrained=True, device="mps")
 model.eval()
 
 # Define transformations
-transform = transforms.Compose([transforms.ToTensor(), transforms.Grayscale()])
+transform = transforms.Compose([transforms.ToTensor()])
 
 # Set up the video capture
 cap = cv2.VideoCapture(0)  # Change to the appropriate camera index if not the default
