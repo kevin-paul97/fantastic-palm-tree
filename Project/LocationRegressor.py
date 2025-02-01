@@ -18,7 +18,7 @@ class LocationRegressor(nn.Module):
             nn.ReLU(),
             nn.Conv2d(64, 128, kernel_size=3, padding=1),
             nn.MaxPool2d(4),
-            nn.ReLU(),e
+            nn.ReLU(),
             nn.Conv2d(128, 256, kernel_size=3, padding=1),
             nn.MaxPool2d(4),
             nn.ReLU(), # Next the linear layers for regression
