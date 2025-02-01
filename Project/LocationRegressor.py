@@ -15,15 +15,16 @@ class LocationRegressor(nn.Module):
         self.model = nn.Sequential(
             nn.Conv2d(1, 64, kernel_size=3, padding=1),
             nn.MaxPool2d(4),
-            nn.ReLU(),
+            nn.Tanh(),
             nn.Conv2d(64, 128, kernel_size=3, padding=1),
             nn.MaxPool2d(4),
-            nn.ReLU(),
+            nn.Tanh(),
             nn.Conv2d(128, 256, kernel_size=3, padding=1),
             nn.MaxPool2d(4),
-            nn.ReLU(), # Next the linear layers for regression
+            nn.Tanh(), # Next the linear layers for regression
             nn.Flatten(),
-            nn.Linear(256, 2)
+            nn.Linear(256, 128),
+            nn.Linear(128, 2),
         )
 
     def forward(self, x):
