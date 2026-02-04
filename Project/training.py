@@ -381,6 +381,9 @@ class Trainer:
                 trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
                 self.writer.add_scalar('Model/Total_Parameters', total_params, epoch)
                 self.writer.add_scalar('Model/Trainable_Parameters', trainable_params, epoch)
+                
+                # Flush writer to ensure data is written to disk immediately
+                self.writer.flush()
             
             # Enhanced logging
             if hasattr(self, 'training_logger') and self.training_logger:

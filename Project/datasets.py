@@ -143,6 +143,30 @@ def create_dataloaders(
 ) -> Tuple[DataLoader, DataLoader, DataLoader]:
     """Create train, validation, and test dataloaders."""
     
+    # Determine optimal dataloader settings based on device
+    import torch
+    device = torch.device(config.training.device)
+    
+    # Optimize dataloader settings for MPS vs CUDA vs CPU
+    if device.type == 'mps':
+        # MPS has issues with multiprocessing and pin_memory
+        num_workers = 0  # Single-threaded for MPS
+        pin_memory = False
+        persistent_workers = False
+    elif device.type == 'cuda':
+        # CUDA benefits from multiprocessing and pin_memory
+        num_workers = min(num_workers, 4)  # Cap workers to prevent oversubscription
+        pin_memory = True
+        persistent_workers = True
+    else:
+        # CPU: moderate workers, no pin_memory needed
+        num_workers = min(num_workers, 2)
+        pin_memory = False
+        persistent_workers = num_workers > 0
+    
+    logger.info(f"Using dataloader settings for {device.type}: "
+                f"workers={num_workers}, pin_memory={pin_memory}")
+    
     # Create transforms
     transform = create_transforms(
         image_size=config.data.image_size,
@@ -177,13 +201,14 @@ def create_dataloaders(
         val_split=config.data.val_split
     )
     
-    # Create dataloaders
+    # Create dataloaders with optimized settings
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
-        pin_memory=True
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers if num_workers > 0 else False
     )
     
     val_loader = DataLoader(
@@ -191,7 +216,8 @@ def create_dataloaders(
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
-        pin_memory=True
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers if num_workers > 0 else False
     )
     
     test_loader = DataLoader(

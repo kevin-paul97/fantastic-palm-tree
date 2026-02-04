@@ -12,6 +12,7 @@ from data import EPICDataDownloader, CoordinateExtractor
 from datasets import create_dataloaders
 from models import create_location_regressor, create_autoencoder
 from training import LocationRegressorTrainer, AutoEncoderTrainer
+from enhanced_training import LocationRegressorTrainer as EnhancedLocationRegressorTrainer, AutoEncoderTrainer as EnhancedAutoEncoderTrainer
 from visualization import (
     plot_coordinate_distribution,
     plot_world_map_with_coordinates,
@@ -94,8 +95,8 @@ def train_location_regressor(config):
     model = create_location_regressor(config)
     logger.info(f"Model has {sum(p.numel() for p in model.parameters() if p.requires_grad):,} trainable parameters")
     
-    # Create trainer
-    trainer = LocationRegressorTrainer(
+    # Create enhanced trainer
+    trainer = EnhancedLocationRegressorTrainer(
         model=model,
         train_loader=train_loader,
         val_loader=val_loader,
@@ -124,8 +125,8 @@ def train_autoencoder(config):
     model = create_autoencoder(config)
     logger.info(f"AutoEncoder has {sum(p.numel() for p in model.parameters() if p.requires_grad):,} trainable parameters")
     
-    # Create trainer
-    trainer = AutoEncoderTrainer(
+    # Create enhanced trainer
+    trainer = EnhancedAutoEncoderTrainer(
         model=model,
         train_loader=train_loader,
         val_loader=val_loader,
