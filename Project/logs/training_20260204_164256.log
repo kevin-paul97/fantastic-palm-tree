@@ -1,0 +1,10 @@
+2026-02-04 16:42:56 - training - INFO - Training device: mps
+2026-02-04 16:42:56 - training - INFO - Dataset split - Train: 75, Val: 10, Test: 0
+2026-02-04 16:42:56 - training - INFO - Model: LocationRegressor - Total parameters: 402,818, Trainable parameters: 402,818
+2026-02-04 16:42:56 - training - INFO - Starting training for 5 epochs on mps
+2026-02-04 16:45:12 - training - INFO - Epoch 1 completed - Train Loss: 0.053879, Val Loss: 0.041814, Duration: 135.13s
+2026-02-04 16:45:12 - training - INFO - Checkpoint saved to models/best_model.pth
+2026-02-04 16:45:12 - training - INFO - Epoch 1/5: Train Loss: 0.053879, Val Loss: 0.041814
+2026-02-04 16:47:33 - training - INFO - Epoch 2 completed - Train Loss: 0.042490, Val Loss: 0.034173, Duration: 141.48s
+2026-02-04 16:47:33 - training - INFO - Checkpoint saved to models/best_model.pth
+2026-02-04 16:47:33 - training - INFO - Epoch 2/5: Train Loss: 0.042490, Val Loss: 0.034173
