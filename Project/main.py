@@ -181,43 +181,62 @@ def evaluate_model(config, model_path: str):
     all_predictions = torch.cat(all_predictions, dim=0)
     all_targets = torch.cat(all_targets, dim=0)
     
-    # Calculate metrics
-    mse_loss = torch.nn.functional.mse_loss(all_predictions, normalizer.normalize(all_targets))
+    # Calculate metrics - compare normalized predictions with normalized targets
+    targets_norm = normalizer.normalize(all_targets)
+    mse_loss = torch.nn.functional.mse_loss(all_predictions, targets_norm)
     
-    # Denormalize for coordinate error calculation
+    # Denormalize both predictions and targets for coordinate error calculation
     pred_coords = normalizer.denormalize(all_predictions)
     true_coords = normalizer.denormalize(all_targets)
     
-    # Calculate coordinate errors in degrees
-    lon_errors = torch.abs(pred_coords[:, 0] - true_coords[:, 0])
+    # Calculate coordinate errors using proper longitude wraparound handling
+    coord_errors = normalizer.compute_coordinate_error_degrees(pred_coords, true_coords)
+    
+    # Also get individual errors for reporting
+    lon_errors = normalizer.compute_longitude_error(pred_coords[:, 0], true_coords[:, 0])
     lat_errors = torch.abs(pred_coords[:, 1] - true_coords[:, 1])
-    coord_errors = torch.sqrt(lon_errors**2 + lat_errors**2)
+    
+    # Ensure all errors are positive and convert to CPU for calculation
+    coord_errors_cpu = coord_errors.abs().cpu()
+    lon_errors_cpu = lon_errors.abs().cpu()
+    lat_errors_cpu = lat_errors.abs().cpu()
     
     logger.info(f"Test MSE: {mse_loss:.6f}")
-    logger.info(f"Mean coordinate error: {coord_errors.mean():.3f} degrees")
-    logger.info(f"Median coordinate error: {coord_errors.median():.3f} degrees")
+    logger.info(f"Mean coordinate error: {coord_errors_cpu.mean():.3f} degrees")
+    logger.info(f"Median coordinate error: {coord_errors_cpu.median():.3f} degrees")
     
     # Additional statistics
-    logger.info(f"Longitude mean error: {lon_errors.mean():.3f} degrees")
-    logger.info(f"Latitude mean error: {lat_errors.mean():.3f} degrees")
-    logger.info(f"Min coordinate error: {coord_errors.min():.3f} degrees")
-    logger.info(f"Max coordinate error: {coord_errors.max():.3f} degrees")
+    logger.info(f"Longitude mean error: {lon_errors_cpu.mean():.3f} degrees")
+    logger.info(f"Latitude mean error: {lat_errors_cpu.mean():.3f} degrees")
+    logger.info(f"Min coordinate error: {coord_errors_cpu.min():.3f} degrees")
+    logger.info(f"Max coordinate error: {coord_errors_cpu.max():.3f} degrees")
+    
+    # Use CPU tensors for visualization
+    pred_coords_cpu = pred_coords.cpu()
+    true_coords_cpu = true_coords.cpu()
+    coord_errors_cpu = coord_errors.cpu()
     
     # Create visualizations
-    from visualization import plot_coordinate_predictions, plot_error_distribution
+    from visualization import plot_coordinate_predictions, plot_error_distribution, plot_predictions_on_world_map
     
     output_dir = Path("outputs")
     output_dir.mkdir(exist_ok=True)
     
     plot_coordinate_predictions(
-        all_targets, all_predictions,
+        all_targets.cpu(), all_predictions.cpu(),
         save_path=str(output_dir / "coordinate_predictions.png"),
         show_plot=False
     )
     
     plot_error_distribution(
-        all_targets, all_predictions,
+        all_targets.cpu(), all_predictions.cpu(),
         save_path=str(output_dir / "error_distribution.png"),
+        show_plot=False
+    )
+    
+    plot_predictions_on_world_map(
+        all_targets.cpu(), all_predictions.cpu(),
+        save_path=str(output_dir / "world_map_predictions.png"),
         show_plot=False
     )
 

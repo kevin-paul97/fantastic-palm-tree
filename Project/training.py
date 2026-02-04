@@ -456,17 +456,17 @@ class LocationRegressorTrainer(Trainer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         
-    def compute_coordinate_error(self, outputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        """Compute coordinate prediction error in degrees."""
-        # Denormalize predictions and targets
+    def compute_coordinate_error(self, outputs: torch.Tensor, targets_norm: torch.Tensor) -> torch.Tensor:
+        """Compute coordinate prediction error in degrees with proper longitude handling."""
+        # outputs are normalized, targets_norm are already normalized
+        # Denormalize both to get real-world coordinates
         outputs_denorm = self.coord_normalizer.denormalize(outputs)
-        targets_denorm = self.coord_normalizer.denormalize(targets)
+        targets_denorm = self.coord_normalizer.denormalize(targets_norm)
         
-        # Compute Euclidean distance in degrees
-        diff = outputs_denorm - targets_denorm
-        distance = torch.sqrt(diff[:, 0]**2 + diff[:, 1]**2)
+        # Use proper coordinate error calculation with longitude wraparound
+        coord_errors = self.coord_normalizer.compute_coordinate_error_degrees(outputs_denorm, targets_denorm)
         
-        return distance.mean()
+        return coord_errors.mean()
     
     def validate_epoch(self) -> float:
         """Validate with additional coordinate error metrics."""

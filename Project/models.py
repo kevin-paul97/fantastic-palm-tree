@@ -52,7 +52,8 @@ class LocationRegressor(nn.Module):
             nn.Linear(self.flattened_size, hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout_rate),
-            nn.Linear(hidden_dim, output_dim)
+            nn.Linear(hidden_dim, output_dim),
+            nn.Sigmoid()  # Add sigmoid to ensure outputs are in [0, 1] range for normalized coordinates
         )
         
     def _build_conv_layers(self) -> nn.ModuleList:

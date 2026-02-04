@@ -116,7 +116,7 @@ class SatelliteImageDataset(Dataset):
             # Default transform to tensor
             image = transforms.ToTensor()(image)
         
-        # Convert coordinates to tensor
+        # Convert coordinates to tensor [lon, lat] for consistent processing
         coords = torch.tensor([lon, lat], dtype=torch.float32)
         
         return image, coords
@@ -246,8 +246,15 @@ class CoordinateNormalizer:
         lon = coords[:, 0]
         lat = coords[:, 1]
         
+        # Normalize longitude from [-180, 180] to [0, 1]
         lon_norm = (lon - self.lon_min) / (self.lon_max - self.lon_min)
+        
+        # Normalize latitude from [-90, 90] to [0, 1]
         lat_norm = (lat - self.lat_min) / (self.lat_max - self.lat_min)
+        
+        # Clamp to [0, 1] range to handle any edge cases
+        lon_norm = torch.clamp(lon_norm, 0.0, 1.0)
+        lat_norm = torch.clamp(lat_norm, 0.0, 1.0)
         
         return torch.stack([lon_norm, lat_norm], dim=1)
     
@@ -260,3 +267,33 @@ class CoordinateNormalizer:
         lat = lat_norm * (self.lat_max - self.lat_min) + self.lat_min
         
         return torch.stack([lon, lat], dim=1)
+    
+    def compute_longitude_error(self, pred_lon: torch.Tensor, true_lon: torch.Tensor) -> torch.Tensor:
+        """Compute longitude error accounting for wraparound at ±180°."""
+        # Calculate direct difference
+        diff = torch.abs(pred_lon - true_lon)
+        
+        # Account for wraparound: if difference > 180°, use the shorter path
+        wrap_diff = 360.0 - diff
+        
+        # Take the minimum of direct and wraparound differences
+        lon_error = torch.minimum(diff, wrap_diff)
+        
+        return lon_error
+    
+    def compute_coordinate_error_degrees(self, pred_coords: torch.Tensor, true_coords: torch.Tensor) -> torch.Tensor:
+        """Compute coordinate prediction error in degrees with proper longitude handling."""
+        # pred_coords and true_coords are in real-world coordinates [lon, lat]
+        pred_lon, pred_lat = pred_coords[:, 0], pred_coords[:, 1]
+        true_lon, true_lat = true_coords[:, 0], true_coords[:, 1]
+        
+        # Longitude error with wraparound handling
+        lon_error = self.compute_longitude_error(pred_lon, true_lon)
+        
+        # Latitude error (no wraparound needed)
+        lat_error = torch.abs(pred_lat - true_lat)
+        
+        # Euclidean distance
+        distance_error = torch.sqrt(lon_error**2 + lat_error**2)
+        
+        return distance_error
