@@ -1,0 +1,46 @@
+name: NASA EPIC API Configuration
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_key:
+        description: 'NASA EPIC API Key'
+        required: true
+        type: string
+
+jobs:
+  configure-api-key:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Configure NASA EPIC API Key
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const path = require('path');
+          
+          // Create config directory if it doesn't exist
+          const configDir = '.github/actions-config';
+          if (!fs.existsSync(configDir)) {
+            fs.mkdirSync(configDir, { recursive: true });
+          }
+          
+          // Write API key to config file
+          const configContent = {
+            "nasa_epic_api_key": "${{ github.event.inputs.api_key }}"
+          };
+          
+          fs.writeFileSync(
+            path.join(configDir, 'api-config.json'),
+            JSON.stringify(configContent, null, 2)
+          );
+          
+          console.log('✅ NASA EPIC API key configured successfully!');
+          console.log('📁 Config file: .github/actions-config/api-config.json');
+          console.log('🔐 API Key format:', '${{ github.event.inputs.api_key }}'.substring(0, 8) + '...');
+          console.log('');
+          console.log('Next steps:');
+          console.log('1. Pull the latest code from the repository');
+          console.log('2. The API key will be automatically used for downloads');
+          console.log('');
+          console.log('⚠️  Never share your API key or commit it to the repository!');

@@ -6,11 +6,16 @@ Creates proper image files from consolidated metadata with correct naming.
 
 import json
 import os
-import requests
+import shutil
+from typing import Dict, List, Optional
+import pandas as pd
 from pathlib import Path
 import logging
-from typing import Dict, List, Optional, Union
 from tqdm import tqdm
+
+# Import our API key manager
+from api_key_manager import download_with_auth, get_api_key_configured
+from github_config_loader import get_authenticated_requests_session, setup_api_instructions
 import shutil
 
 logger = logging.getLogger(__name__)
@@ -98,14 +103,18 @@ class ImageFileMapper:
             
             download_url = f"{self.base_url}/{year}/{month}/{day}/{image_name}"
             
-            # Download image
+            # Download image with authentication
             logger.debug(f"Downloading: {download_url}")
-            response = requests.get(download_url, timeout=30)
-            response.raise_for_status()
             
-            # Save image
-            with open(output_path, 'wb') as f:
-                f.write(response.content)
+            # Use authenticated download
+            success = download_with_auth(download_url, str(output_path))
+            
+            if not success:
+                logger.error(f"Failed to download: {image_name}")
+                return False
+            
+            logger.info(f"Successfully downloaded: {image_name}")
+            return True
             
             return True
             
@@ -250,7 +259,7 @@ def main():
     from config import Config
     
     parser = argparse.ArgumentParser(description="Create image files from consolidated metadata")
-    parser.add_argument("--mode", choices=["download", "verify", "map"], 
+    parser.add_argument("--mode", choices=["download", "verify", "map", "setup"], 
                        default="download", help="Operation mode")
     parser.add_argument("--output_dir", type=str, default="images_with_filenames",
                        help="Output directory for images")
@@ -261,6 +270,11 @@ def main():
                        help="Output file for filename mapping")
     
     args = parser.parse_args()
+    
+    # Handle setup mode
+    if args.mode == "setup":
+        print(setup_api_instructions())
+        return 0
     
     # Load configuration
     if args.config:
