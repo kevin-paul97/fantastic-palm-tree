@@ -253,18 +253,15 @@ class ImageDownloader:
             if not image_name.endswith('.png'):
                 image_name = f"{image_name}.png"
             
-            # Construct proper EPIC archive URL with API key
+            # Construct proper EPIC archive URL
             # Use image name as-is from metadata, ensure .png extension
             year, month, day = date[:4], date[5:7], date[8:10]
             if not image_name.endswith('.png'):
                 image_name = f"{image_name}.png"
             
-            # Add API key as query parameter
-            from github_config_loader import load_api_key_from_github_config
-            api_key = load_api_key_from_github_config()
-            
-            # Correct NASA API format: https://api.nasa.gov/EPIC/archive/natural/2019/05/30/png/epic_1b_20190530011359.png?api_key=KEY
-            url = f"https://api.nasa.gov/EPIC/archive/natural/{year}/{month}/{day}/png/{image_name}?api_key={api_key}"
+            # Use the original EPIC archive domain (not API endpoint)
+            # Format: https://epic.gsfc.nasa.gov/archive/enhanced/2019/05/30/png/epic_RGB_20190530011359.png
+            url = f"https://epic.gsfc.nasa.gov/archive/enhanced/{year}/{month}/{day}/png/{image_name}"
             
             # Create target directory structure: images/YYYY-MM-DD/
             date_dir = self.images_dir / date
