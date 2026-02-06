@@ -85,9 +85,28 @@ python3 main.py --mode evaluate --model_path models/your_model.pth
 ```
 
 ### 4. Download Recent Images
-Get the latest satellite imagery:
+Get the latest satellite imagery (metadata + actual images):
 ```bash
 python3 main.py --mode download_recent --num_days 7
+```
+
+### 5. Download Only Images
+Download actual PNG image files (oldest available first):
+```bash
+# Download 10 oldest images
+python3 main.py --mode download_images --num_images 10
+
+# Download images from 5 oldest days
+python3 main.py --mode download_images --num_days 5
+
+# Download all available images
+python3 main.py --mode download_images
+```
+
+### 6. Download Latest N Images
+Get the latest N satellite images with metadata:
+```bash
+python3 main.py --mode download_latest --num_images 100
 ```
 
 ## 🔧 Advanced Usage
@@ -148,6 +167,31 @@ python3 main.py --mode train_regressor --lr 0.0005 --batch_size 16 --device cuda
 python3 main.py --mode train_regressor --no-tensorboard
 ```
 
+### Data Management Options
+```bash
+# Setup complete data pipeline (metadata + sample images)
+python3 main.py --mode setup
+
+# Download recent 7 days (metadata + images)
+python3 main.py --mode download_recent --num_days 7
+
+# Download only images from oldest available dates
+python3 main.py --mode download_images --num_images 50
+
+# Download images from specific number of oldest days
+python3 main.py --mode download_images --num_days 5
+
+# Download latest 100 images with metadata
+python3 main.py --mode download_latest --num_images 100
+
+# Cross-machine dataset preparation
+python3 image_file_mapper.py --mode map
+python3 image_file_mapper.py --mode download --max_images 1000
+
+# Verify dataset integrity
+python3 cross_machine_datasets.py
+```
+
 ## 📊 Model Performance
 
 The system includes comprehensive evaluation tools:
@@ -175,6 +219,89 @@ The system automatically detects and configures for:
 - Robust download retry mechanisms
 - Graceful fallback for missing API keys
 - Comprehensive error reporting and recovery
+
+## 📋 Complete Command Reference
+
+### Available Modes
+| Mode | Description | Key Arguments |
+|------|-------------|---------------|
+| `setup` | Initialize complete data pipeline | None |
+| `train_regressor` | Train coordinate prediction model | `--epochs`, `--batch_size`, `--lr` |
+| `train_autoencoder` | Train image autoencoder | `--epochs`, `--batch_size`, `--lr` |
+| `evaluate` | Evaluate trained model | `--model_path` (required) |
+| `download_recent` | Download recent N days (metadata + images) | `--num_days` |
+| `download_latest` | Download latest N images (metadata + images) | `--num_images` |
+| `download_images` | Download only PNG image files | `--num_images`, `--num_days` |
+
+### Command Examples
+
+#### Data Pipeline Commands
+```bash
+# Complete setup (metadata + sample downloads)
+python3 main.py --mode setup
+
+# Download recent 7 days with actual images
+python3 main.py --mode download_recent --num_days 7
+
+# Download latest 100 images with metadata
+python3 main.py --mode download_latest --num_images 100
+
+# Download only 50 oldest PNG images
+python3 main.py --mode download_images --num_images 50
+
+# Download images from 3 oldest days
+python3 main.py --mode download_images --num_days 3
+```
+
+#### Training Commands
+```bash
+# Train with default settings (50 epochs, batch 32)
+python3 main.py --mode train_regressor
+
+# Custom training parameters
+python3 main.py --mode train_regressor --epochs 100 --batch_size 64 --lr 0.001
+
+# Train on specific device
+python3 main.py --mode train_regressor --device cuda
+
+# Train autoencoder
+python3 main.py --mode train_autoencoder --epochs 200
+
+# Training without TensorBoard
+python3 main.py --mode train_regressor --no-tensorboard
+```
+
+#### Evaluation Commands
+```bash
+# Evaluate specific model
+python3 main.py --mode evaluate --model_path models/best_model.pth
+```
+
+#### Cross-Machine Compatibility Commands
+```bash
+# Create image filename mapping (for portability)
+python3 image_file_mapper.py --mode map
+
+# Download images with mapping file
+python3 image_file_mapper.py --mode download --max_images 1000
+
+# Verify dataset integrity across machines
+python3 cross_machine_datasets.py
+```
+
+### All Available Arguments
+```bash
+--mode MODE              # Operation mode (required)
+--config PATH            # Custom config file
+--model_path PATH        # Model file for evaluation
+--epochs N              # Training epochs (default: varies)
+--batch_size N          # Training batch size
+--lr FLOAT             # Learning rate
+--device DEVICE          # cuda/mps/cpu/auto (default: auto)
+--no-tensorboard         # Disable TensorBoard
+--num_days N           # Days to download (default: 7)
+--num_images N         # Images to download (default: 100)
+```
 
 ## 📁 Data Directories
 
