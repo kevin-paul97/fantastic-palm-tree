@@ -101,6 +101,76 @@ class EPICDataDownloader:
         logger.info(f"Downloaded data for {success_count}/{len(dates)} dates")
         return success_count > 0
     
+    def download_recent_images(self, num_days: int = 7, progress_callback=None) -> bool:
+        """Download the most recent images via newest metadata dates."""
+        try:
+            metadata = self.load_metadata()
+            dates = self.extract_dates(metadata)
+            
+            # Get the most recent dates
+            recent_dates = dates[-num_days:]  # Last N dates
+            logger.info(f"Downloading images for {len(recent_dates)} most recent dates")
+            
+            success_count = 0
+            for i, date in enumerate(recent_dates):
+                logger.info(f"Downloading data for {date} ({i+1}/{len(recent_dates)})")
+                if self.download_daily_data(date):
+                    success_count += 1
+                
+                if progress_callback:
+                    progress_callback(i + 1, len(recent_dates))
+            
+            logger.info(f"Downloaded data for {success_count}/{len(recent_dates)} recent dates")
+            
+            # Auto-consolidate after downloading
+            if success_count > 0:
+                self.consolidate_metadata()
+            
+            return success_count > 0
+            
+        except Exception as e:
+            logger.error(f"Failed to download recent images: {e}")
+            return False
+    
+    def download_latest_images(self, num_images: int = 100) -> bool:
+        """Download the latest N images from the most recent dates."""
+        try:
+            metadata = self.load_metadata()
+            dates = self.extract_dates(metadata)
+            
+            # Start from the most recent date and work backwards
+            downloaded_images = 0
+            target_date_idx = len(dates) - 1
+            
+            while downloaded_images < num_images and target_date_idx >= 0:
+                date = dates[target_date_idx]
+                logger.info(f"Downloading date {date} for more images ({downloaded_images}/{num_images})")
+                
+                if self.download_daily_data(date):
+                    # Check how many images we got from this date
+                    date_dir = self.images_dir / date
+                    daily_json = date_dir / f"{date}.json"
+                    
+                    if daily_json.exists():
+                        with open(daily_json, 'r') as f:
+                            daily_data = json.load(f)
+                            images_in_date = len(daily_data)
+                            downloaded_images += images_in_date
+                            logger.info(f"Got {images_in_date} images from {date}")
+                
+                target_date_idx -= 1
+            
+            # Auto-consolidate after downloading
+            if downloaded_images > 0:
+                self.consolidate_metadata()
+            
+            logger.info(f"Downloaded {downloaded_images} images total")
+            return downloaded_images > 0
+            
+        except Exception as e:
+            logger.error(f"Failed to download latest images: {e}")
+            return False
+    
     def consolidate_metadata(self) -> bool:
         """Consolidate all daily JSON files into combined directory."""
         try:

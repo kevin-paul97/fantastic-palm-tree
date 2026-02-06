@@ -72,8 +72,17 @@ class Trainer:
         else:
             self.writer = None
         
-        # Setup coordinate normalizer
-        self.coord_normalizer = CoordinateNormalizer()
+        # Setup coordinate normalizer with dataset-specific ranges
+        # Get coordinate ranges from training data
+        all_coords = []
+        for images, coords in self.train_loader:
+            all_coords.append(coords)
+        
+        if all_coords:
+            all_coords_tensor = torch.cat(all_coords, dim=0)
+            self.coord_normalizer = CoordinateNormalizer(all_coords_tensor)
+        else:
+            self.coord_normalizer = CoordinateNormalizer()
         
         # Training state
         self.current_epoch = 0
@@ -257,7 +266,10 @@ class Trainer:
             # Forward pass
             self.optimizer.zero_grad()
             outputs = self.model(images)
-            loss = self.criterion(outputs, coords_norm)
+            
+            # Apply sigmoid constraint for normalized coordinates
+            outputs_constrained = torch.sigmoid(outputs)
+            loss = self.criterion(outputs_constrained, coords_norm)
             
             # Backward pass
             loss.backward()
@@ -458,7 +470,7 @@ class LocationRegressorTrainer(Trainer):
         
     def compute_coordinate_error(self, outputs: torch.Tensor, targets_norm: torch.Tensor) -> torch.Tensor:
         """Compute coordinate prediction error in degrees with proper longitude handling."""
-        # outputs are normalized, targets_norm are already normalized
+        # outputs and targets_norm are already normalized
         # Denormalize both to get real-world coordinates
         outputs_denorm = self.coord_normalizer.denormalize(outputs)
         targets_denorm = self.coord_normalizer.denormalize(targets_norm)
@@ -484,10 +496,11 @@ class LocationRegressorTrainer(Trainer):
                 
                 # Forward pass
                 outputs = self.model(images)
-                loss = self.criterion(outputs, coords_norm)
+                outputs_constrained = torch.sigmoid(outputs)
+                loss = self.criterion(outputs_constrained, coords_norm)
                 
                 # Compute coordinate error
-                coord_error = self.compute_coordinate_error(outputs, coords_norm)
+                coord_error = self.compute_coordinate_error(outputs_constrained, coords_norm)
                 
                 total_loss += loss.item()
                 total_coord_error += coord_error.item()

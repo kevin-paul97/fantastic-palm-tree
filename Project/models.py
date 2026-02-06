@@ -52,9 +52,24 @@ class LocationRegressor(nn.Module):
             nn.Linear(self.flattened_size, hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout_rate),
-            nn.Linear(hidden_dim, output_dim),
-            nn.Sigmoid()  # Add sigmoid to ensure outputs are in [0, 1] range for normalized coordinates
+            nn.Linear(hidden_dim, output_dim)
+            # Remove Sigmoid - let model learn proper range, we'll constrain during training
         )
+        
+        # Initialize weights properly
+        self._initialize_weights()
+        
+    def _initialize_weights(self):
+        """Initialize model weights with proper scaling."""
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
         
     def _build_conv_layers(self) -> nn.ModuleList:
         """Build convolutional layers."""

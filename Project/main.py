@@ -261,10 +261,82 @@ def evaluate_model(config, model_path: str):
     logger.info(f"Evaluation complete! Report saved to: {report_path}")
 
 
+def download_recent_images(config, num_days: int = 7):
+    """Download most recent satellite images."""
+    logger.info(f"Downloading most recent {num_days} days of satellite images...")
+    
+    downloader = EPICDataDownloader(config)
+    success = downloader.download_recent_images(num_days)
+    
+    if success:
+        logger.info("Recent images downloaded successfully!")
+        # Extract and visualize coordinates
+        extractor = CoordinateExtractor(config)
+        lat_coords, lon_coords = extractor.extract_coordinates()
+        
+        # Create visualizations
+        output_dir = Path("outputs")
+        output_dir.mkdir(exist_ok=True)
+        
+        plot_coordinate_distribution(
+            lat_coords, lon_coords,
+            save_path=str(output_dir / "recent_coordinate_distribution.png"),
+            show_plot=False
+        )
+        
+        plot_world_map_with_coordinates(
+            lat_coords, lon_coords,
+            save_path=str(output_dir / "recent_world_map.png"),
+            show_plot=False
+        )
+        
+        # Print statistics
+        stats = create_coordinate_statistics_table(lat_coords, lon_coords)
+        logger.info("Recent Images Coordinate Statistics:\n" + str(stats))
+    else:
+        logger.error("Failed to download recent images")
+
+
+def download_latest_images(config, num_images: int = 100):
+    """Download latest N satellite images."""
+    logger.info(f"Downloading latest {num_images} satellite images...")
+    
+    downloader = EPICDataDownloader(config)
+    success = downloader.download_latest_images(num_images)
+    
+    if success:
+        logger.info("Latest images downloaded successfully!")
+        # Extract and visualize coordinates
+        extractor = CoordinateExtractor(config)
+        lat_coords, lon_coords = extractor.extract_coordinates()
+        
+        # Create visualizations
+        output_dir = Path("outputs")
+        output_dir.mkdir(exist_ok=True)
+        
+        plot_coordinate_distribution(
+            lat_coords, lon_coords,
+            save_path=str(output_dir / "latest_coordinate_distribution.png"),
+            show_plot=False
+        )
+        
+        plot_world_map_with_coordinates(
+            lat_coords, lon_coords,
+            save_path=str(output_dir / "latest_world_map.png"),
+            show_plot=False
+        )
+        
+        # Print statistics
+        stats = create_coordinate_statistics_table(lat_coords, lon_coords)
+        logger.info("Latest Images Coordinate Statistics:\n" + str(stats))
+    else:
+        logger.error("Failed to download latest images")
+
+
 def main():
     """Main function."""
     parser = argparse.ArgumentParser(description="Satellite Image Coordinate Prediction")
-    parser.add_argument("--mode", choices=["setup", "train_regressor", "train_autoencoder", "evaluate"], 
+    parser.add_argument("--mode", choices=["setup", "train_regressor", "train_autoencoder", "evaluate", "download_recent", "download_latest"], 
                        default="train_regressor", help="Mode to run")
     parser.add_argument("--config", type=str, help="Path to config file")
     parser.add_argument("--model_path", type=str, help="Path to trained model for evaluation")
@@ -275,6 +347,10 @@ def main():
                        help="Training device (auto-detects: cuda > mps > cpu)")
     parser.add_argument("--no-tensorboard", action="store_true", 
                        help="Disable automatic TensorBoard launch")
+    parser.add_argument("--num_days", type=int, default=7, 
+                       help="Number of most recent days to download (for download_recent mode)")
+    parser.add_argument("--num_images", type=int, default=100, 
+                       help="Number of latest images to download (for download_latest mode)")
     
     args = parser.parse_args()
     
@@ -320,6 +396,10 @@ def main():
         if not args.model_path:
             raise ValueError("Model path required for evaluation")
         evaluate_model(config, args.model_path)
+    elif args.mode == "download_recent":
+        download_recent_images(config, args.num_days)
+    elif args.mode == "download_latest":
+        download_latest_images(config, args.num_images)
 
 
 if __name__ == "__main__":

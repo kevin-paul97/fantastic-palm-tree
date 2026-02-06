@@ -1,0 +1,10 @@
+Metric,Value
+MSE Loss,0.011763
+Mean Coordinate Error (degrees),38.195
+Median Coordinate Error (degrees),27.337
+Mean Haversine Distance (km),4051.7
+Median Haversine Distance (km),2917.1
+Predictions within 1km (%),0.00
+Predictions within 10km (%),0.00
+Predictions within 100km (%),0.67
+Predictions within 1000km (%),17.00
