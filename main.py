@@ -1,0 +1,406 @@
+"""
+Main script for training satellite image coordinate prediction models.
+"""
+
+import logging
+import argparse
+import torch
+from pathlib import Path
+
+from config import Config
+from data import EPICDataDownloader, CoordinateExtractor
+from datasets import create_dataloaders
+from models import create_location_regressor, create_autoencoder
+from training import LocationRegressorTrainer, AutoEncoderTrainer
+from enhanced_training import LocationRegressorTrainer as EnhancedLocationRegressorTrainer, AutoEncoderTrainer as EnhancedAutoEncoderTrainer
+from visualization import (
+    plot_coordinate_distribution,
+    plot_world_map_with_coordinates,
+    create_coordinate_statistics_table
+)
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Setup enhanced logging if available
+try:
+    from logging_utils import setup_logging
+    setup_logging("INFO")
+except ImportError:
+    pass
+
+
+def setup_data_pipeline(config):
+    """Setup the complete data pipeline."""
+    logger.info("Setting up data pipeline...")
+    
+    # Initialize downloader
+    downloader = EPICDataDownloader(config)
+    
+    # Download metadata if needed
+    if not Path(config.data.raw_data_dir).exists():
+        logger.info("Downloading metadata...")
+        downloader.download_metadata()
+    
+    # Download daily data if needed
+    if not Path(config.data.combined_dir).exists():
+        logger.info("Downloading daily data...")
+        downloader.download_all_images()
+        downloader.consolidate_metadata()
+    
+    # Extract coordinates for analysis
+    extractor = CoordinateExtractor(config)
+    lat_coords, lon_coords = extractor.extract_coordinates()
+    
+    # Create visualizations
+    output_dir = Path("outputs")
+    output_dir.mkdir(exist_ok=True)
+    
+    plot_coordinate_distribution(
+        lat_coords, lon_coords,
+        save_path=str(output_dir / "coordinate_distribution.png"),
+        show_plot=False
+    )
+    
+    plot_world_map_with_coordinates(
+        lat_coords, lon_coords,
+        save_path=str(output_dir / "world_map_coordinates.png"),
+        show_plot=False
+    )
+    
+    # Print statistics
+    stats = create_coordinate_statistics_table(lat_coords, lon_coords)
+    logger.info("Coordinate Statistics:\n" + str(stats))
+    
+    logger.info("Data pipeline setup complete!")
+    return lat_coords, lon_coords
+
+
+def train_location_regressor(config):
+    """Train the location regression model."""
+    logger.info("Training LocationRegressor model...")
+    
+    # Create dataloaders
+    train_loader, val_loader, test_loader = create_dataloaders(
+        config,
+        batch_size=config.training.batch_size,
+        num_workers=4
+    )
+    
+    # Create model
+    model = create_location_regressor(config)
+    logger.info(f"Model has {sum(p.numel() for p in model.parameters() if p.requires_grad):,} trainable parameters")
+    
+    # Create enhanced trainer
+    trainer = EnhancedLocationRegressorTrainer(
+        model=model,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        config=config
+    )
+    
+    # Train model
+    history = trainer.train(num_epochs=config.training.epochs)
+    
+    logger.info(f"Training complete! Best validation loss: {trainer.best_val_loss:.6f}")
+    return model, history
+
+
+def train_autoencoder(config):
+    """Train the autoencoder model."""
+    logger.info("Training AutoEncoder model...")
+    
+    # Create dataloaders
+    train_loader, val_loader, test_loader = create_dataloaders(
+        config,
+        batch_size=config.training.batch_size,
+        num_workers=4
+    )
+    
+    # Create model
+    model = create_autoencoder(config)
+    logger.info(f"AutoEncoder has {sum(p.numel() for p in model.parameters() if p.requires_grad):,} trainable parameters")
+    
+    # Create enhanced trainer
+    trainer = EnhancedAutoEncoderTrainer(
+        model=model,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        config=config
+    )
+    
+    # Train model
+    history = trainer.train(num_epochs=config.training.epochs)
+    
+    logger.info(f"AutoEncoder training complete! Best validation loss: {trainer.best_val_loss:.6f}")
+    return model, history
+
+
+def evaluate_model(config, model_path: str):
+    """Evaluate a trained model."""
+    logger.info(f"Evaluating model from {model_path}...")
+    
+    # Create dataloaders
+    train_loader, val_loader, test_loader = create_dataloaders(
+        config,
+        batch_size=config.training.batch_size,
+        num_workers=4
+    )
+    
+    # Load model
+    model = create_location_regressor(config)
+    checkpoint = torch.load(model_path, map_location=config.training.device, weights_only=False)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    
+    # Evaluate on test set
+    model.eval()
+    device = torch.device(config.training.device)
+    model.to(device)
+    
+    from datasets import CoordinateNormalizer
+    normalizer = CoordinateNormalizer()
+    
+    all_predictions = []
+    all_targets = []
+    
+    with torch.no_grad():
+        for images, coords in test_loader:
+            images = images.to(device)
+            coords = coords.to(device)
+            
+            predictions = model(images)
+            
+            all_predictions.append(predictions)
+            all_targets.append(coords)
+    
+    # Concatenate all predictions and targets
+    all_predictions = torch.cat(all_predictions, dim=0)
+    all_targets = torch.cat(all_targets, dim=0)
+    
+    # Calculate metrics - compare normalized predictions with normalized targets
+    # Note: all_predictions are already normalized from model output
+    # all_targets are in real-world coordinates, so we need to normalize them
+    targets_norm = normalizer.normalize(all_targets)
+    mse_loss = torch.nn.functional.mse_loss(all_predictions, targets_norm)
+    
+    # Denormalize both predictions and targets for coordinate error calculation
+    pred_coords = normalizer.denormalize(all_predictions)
+    true_coords = all_targets  # Already in real-world coordinates
+    
+    # Calculate coordinate errors using proper longitude wraparound handling
+    coord_errors = normalizer.compute_coordinate_error_degrees(pred_coords, true_coords)
+    
+    # Calculate Haversine distance for geographic accuracy
+    haversine_distances = normalizer.compute_haversine_distance(pred_coords, true_coords)
+    
+    # Also get individual errors for reporting
+    lon_errors = normalizer.compute_longitude_error(pred_coords[:, 0], true_coords[:, 0])
+    lat_errors = torch.abs(pred_coords[:, 1] - true_coords[:, 1])
+    
+    # Ensure all errors are positive and convert to CPU for calculation
+    coord_errors_cpu = coord_errors.abs().cpu()
+    lon_errors_cpu = lon_errors.abs().cpu()
+    lat_errors_cpu = lat_errors.abs().cpu()
+    haversine_cpu = haversine_distances.abs().cpu()
+    
+    logger.info(f"Test MSE: {mse_loss:.6f}")
+    logger.info(f"Mean coordinate error: {coord_errors_cpu.mean():.3f} degrees")
+    logger.info(f"Median coordinate error: {coord_errors_cpu.median():.3f} degrees")
+    
+    # Additional statistics
+    logger.info(f"Longitude mean error: {lon_errors_cpu.mean():.3f} degrees")
+    logger.info(f"Latitude mean error: {lat_errors_cpu.mean():.3f} degrees")
+    logger.info(f"Min coordinate error: {coord_errors_cpu.min():.3f} degrees")
+    logger.info(f"Max coordinate error: {coord_errors_cpu.max():.3f} degrees")
+    
+    # Haversine distance statistics (geographic accuracy)
+    logger.info(f"Mean Haversine distance: {haversine_cpu.mean():.1f} km")
+    logger.info(f"Median Haversine distance: {haversine_cpu.median():.1f} km")
+    logger.info(f"Min Haversine distance: {haversine_cpu.min():.1f} km")
+    logger.info(f"Max Haversine distance: {haversine_cpu.max():.1f} km")
+    
+    # Create visualizations
+    from visualization import plot_coordinate_predictions, plot_error_distribution, plot_predictions_on_world_map
+    from evaluation_reporter import EvaluationReporter
+    
+    output_dir = Path("outputs")
+    output_dir.mkdir(exist_ok=True)
+    
+    # Normalize targets for visualization functions (predictions are already normalized)
+    targets_norm = normalizer.normalize(all_targets)
+    
+    plot_coordinate_predictions(
+        targets_norm.cpu(), all_predictions.cpu(),
+        save_path=str(output_dir / "coordinate_predictions.png"),
+        show_plot=False
+    )
+    
+    plot_error_distribution(
+        targets_norm.cpu(), all_predictions.cpu(),
+        save_path=str(output_dir / "error_distribution.png"),
+        show_plot=False
+    )
+    
+    plot_predictions_on_world_map(
+        targets_norm.cpu(), all_predictions.cpu(),
+        save_path=str(output_dir / "world_map_predictions.png"),
+        show_plot=False
+    )
+    
+    # Generate comprehensive evaluation report
+    reporter = EvaluationReporter(model_path, config)
+    report_path = reporter.generate_comprehensive_report(
+        all_predictions, all_targets, float(mse_loss), str(output_dir)
+    )
+    reporter.print_summary()
+    
+    logger.info(f"Evaluation complete! Report saved to: {report_path}")
+
+
+def download_recent_images(config, num_days: int = 7):
+    """Download most recent satellite images."""
+    logger.info(f"Downloading most recent {num_days} days of satellite images...")
+    
+    downloader = EPICDataDownloader(config)
+    success = downloader.download_recent_images(num_days)
+    
+    if success:
+        logger.info("Recent images downloaded successfully!")
+        # Extract and visualize coordinates
+        extractor = CoordinateExtractor(config)
+        lat_coords, lon_coords = extractor.extract_coordinates()
+        
+        # Create visualizations
+        output_dir = Path("outputs")
+        output_dir.mkdir(exist_ok=True)
+        
+        plot_coordinate_distribution(
+            lat_coords, lon_coords,
+            save_path=str(output_dir / "recent_coordinate_distribution.png"),
+            show_plot=False
+        )
+        
+        plot_world_map_with_coordinates(
+            lat_coords, lon_coords,
+            save_path=str(output_dir / "recent_world_map.png"),
+            show_plot=False
+        )
+        
+        # Print statistics
+        stats = create_coordinate_statistics_table(lat_coords, lon_coords)
+        logger.info("Recent Images Coordinate Statistics:\n" + str(stats))
+    else:
+        logger.error("Failed to download recent images")
+
+
+def download_latest_images(config, num_images: int = 100):
+    """Download latest N satellite images."""
+    logger.info(f"Downloading latest {num_images} satellite images...")
+    
+    downloader = EPICDataDownloader(config)
+    success = downloader.download_latest_images(num_images)
+    
+    if success:
+        logger.info("Latest images downloaded successfully!")
+        # Extract and visualize coordinates
+        extractor = CoordinateExtractor(config)
+        lat_coords, lon_coords = extractor.extract_coordinates()
+        
+        # Create visualizations
+        output_dir = Path("outputs")
+        output_dir.mkdir(exist_ok=True)
+        
+        plot_coordinate_distribution(
+            lat_coords, lon_coords,
+            save_path=str(output_dir / "latest_coordinate_distribution.png"),
+            show_plot=False
+        )
+        
+        plot_world_map_with_coordinates(
+            lat_coords, lon_coords,
+            save_path=str(output_dir / "latest_world_map.png"),
+            show_plot=False
+        )
+        
+        # Print statistics
+        stats = create_coordinate_statistics_table(lat_coords, lon_coords)
+        logger.info("Latest Images Coordinate Statistics:\n" + str(stats))
+    else:
+        logger.error("Failed to download latest images")
+
+
+def main():
+    """Main function."""
+    parser = argparse.ArgumentParser(description="Satellite Image Coordinate Prediction")
+    parser.add_argument("--mode", choices=["setup", "train_regressor", "train_autoencoder", "evaluate", "download_recent", "download_latest"], 
+                       default="train_regressor", help="Mode to run")
+    parser.add_argument("--config", type=str, help="Path to config file")
+    parser.add_argument("--model_path", type=str, help="Path to trained model for evaluation")
+    parser.add_argument("--epochs", type=int, help="Number of training epochs")
+    parser.add_argument("--batch_size", type=int, help="Batch size")
+    parser.add_argument("--lr", type=float, help="Learning rate")
+    parser.add_argument("--device", type=str, choices=["auto", "cuda", "mps", "cpu"], 
+                       help="Training device (auto-detects: cuda > mps > cpu)")
+    parser.add_argument("--no-tensorboard", action="store_true", 
+                       help="Disable automatic TensorBoard launch")
+    parser.add_argument("--num_days", type=int, default=7, 
+                       help="Number of most recent days to download (for download_recent mode)")
+    parser.add_argument("--num_images", type=int, default=100, 
+                       help="Number of latest images to download (for download_latest mode)")
+    
+    args = parser.parse_args()
+    
+    # Load configuration
+    if args.config:
+        import json
+        with open(args.config, 'r') as f:
+            config_dict = json.load(f)
+        config = Config.from_dict(config_dict)
+    else:
+        config = Config()
+    
+    # Override config with command line arguments
+    if args.epochs:
+        config.training.epochs = args.epochs
+    if args.batch_size:
+        config.training.batch_size = args.batch_size
+    if args.lr:
+        config.training.learning_rate = args.lr
+    if args.device:
+        config.training.device = args.device
+    if args.no_tensorboard:
+        config.training.launch_tensorboard = False
+    
+    # Ensure directories exist
+    import os
+    os.makedirs(config.training.log_dir, exist_ok=True)
+    os.makedirs(config.training.save_dir, exist_ok=True)
+    os.makedirs("outputs", exist_ok=True)
+    
+    # Set number of threads
+    torch.set_num_interop_threads(config.training.num_threads)
+    torch.set_num_threads(config.training.num_threads)
+    
+    # Run specified mode
+    if args.mode == "setup":
+        setup_data_pipeline(config)
+    elif args.mode == "train_regressor":
+        train_location_regressor(config)
+    elif args.mode == "train_autoencoder":
+        train_autoencoder(config)
+    elif args.mode == "evaluate":
+        if not args.model_path:
+            raise ValueError("Model path required for evaluation")
+        evaluate_model(config, args.model_path)
+    elif args.mode == "download_recent":
+        download_recent_images(config, args.num_days)
+    elif args.mode == "download_latest":
+        download_latest_images(config, args.num_images)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,32 @@
+2026-02-06 15:32:00 - training - INFO - Training device: mps
+2026-02-06 15:32:00 - training - INFO - Dataset split - Train: 75, Val: 10, Test: 0
+2026-02-06 15:32:00 - training - INFO - Model: LocationRegressor - Total parameters: 402,818, Trainable parameters: 402,818
+2026-02-06 15:32:00 - enhanced_training - INFO - Starting training for 10 epochs on mps
+2026-02-06 15:36:27 - training - INFO - Epoch 1 completed - Train Loss: 0.052814, Val Loss: 0.037832, Duration: 266.69s
+2026-02-06 15:36:27 - enhanced_training - INFO - Checkpoint saved to models/best_model.pth
+2026-02-06 15:36:27 - enhanced_training - INFO - Epoch 1/10: Train Loss: 0.052814, Val Loss: 0.037832
+2026-02-06 15:40:53 - training - INFO - Epoch 2 completed - Train Loss: 0.038413, Val Loss: 0.028472, Duration: 266.44s
+2026-02-06 15:40:53 - enhanced_training - INFO - Checkpoint saved to models/best_model.pth
+2026-02-06 15:40:53 - enhanced_training - INFO - Epoch 2/10: Train Loss: 0.038413, Val Loss: 0.028472
+2026-02-06 15:45:19 - training - INFO - Epoch 3 completed - Train Loss: 0.031156, Val Loss: 0.032769, Duration: 266.10s
+2026-02-06 15:45:19 - enhanced_training - INFO - Epoch 3/10: Train Loss: 0.031156, Val Loss: 0.032769
+2026-02-06 15:49:46 - training - INFO - Epoch 4 completed - Train Loss: 0.025372, Val Loss: 0.018213, Duration: 266.87s
+2026-02-06 15:49:46 - enhanced_training - INFO - Checkpoint saved to models/best_model.pth
+2026-02-06 15:49:46 - enhanced_training - INFO - Epoch 4/10: Train Loss: 0.025372, Val Loss: 0.018213
+2026-02-06 15:54:14 - training - INFO - Epoch 5 completed - Train Loss: 0.019266, Val Loss: 0.014098, Duration: 267.89s
+2026-02-06 15:54:14 - enhanced_training - INFO - Checkpoint saved to models/best_model.pth
+2026-02-06 15:54:14 - enhanced_training - INFO - Epoch 5/10: Train Loss: 0.019266, Val Loss: 0.014098
+2026-02-06 15:58:43 - training - INFO - Epoch 6 completed - Train Loss: 0.014895, Val Loss: 0.011104, Duration: 268.98s
+2026-02-06 15:58:43 - enhanced_training - INFO - Checkpoint saved to models/best_model.pth
+2026-02-06 15:58:43 - enhanced_training - INFO - Epoch 6/10: Train Loss: 0.014895, Val Loss: 0.011104
+2026-02-06 16:03:15 - training - INFO - Epoch 7 completed - Train Loss: 0.011049, Val Loss: 0.009572, Duration: 272.10s
+2026-02-06 16:03:15 - enhanced_training - INFO - Checkpoint saved to models/best_model.pth
+2026-02-06 16:03:15 - enhanced_training - INFO - Epoch 7/10: Train Loss: 0.011049, Val Loss: 0.009572
+2026-02-06 16:07:50 - training - INFO - Epoch 8 completed - Train Loss: 0.009556, Val Loss: 0.009838, Duration: 274.67s
+2026-02-06 16:07:50 - enhanced_training - INFO - Epoch 8/10: Train Loss: 0.009556, Val Loss: 0.009838
+2026-02-06 16:12:22 - training - INFO - Epoch 9 completed - Train Loss: 0.007768, Val Loss: 0.010931, Duration: 271.60s
+2026-02-06 16:12:22 - enhanced_training - INFO - Epoch 9/10: Train Loss: 0.007768, Val Loss: 0.010931
+2026-02-06 16:16:51 - training - INFO - Epoch 10 completed - Train Loss: 0.005911, Val Loss: 0.010640, Duration: 269.36s
+2026-02-06 16:16:51 - enhanced_training - INFO - Epoch 10/10: Train Loss: 0.005911, Val Loss: 0.010640
+2026-02-06 16:16:51 - enhanced_training - INFO - Checkpoint saved to models/final_model.pth
+2026-02-06 16:16:51 - __main__ - INFO - Training complete! Best validation loss: 0.009572
