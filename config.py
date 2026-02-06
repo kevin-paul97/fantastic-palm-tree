@@ -10,7 +10,7 @@ from typing import Optional, List
 @dataclass
 class DataConfig:
     """Configuration for data processing."""
-    raw_data_dir: str = "epic.gsfc.nasa.gov/api/enhanced"
+    raw_data_dir: str = "raw_data"
     images_dir: str = "images"
     combined_dir: str = "combined"
     download_dir: str = "download"

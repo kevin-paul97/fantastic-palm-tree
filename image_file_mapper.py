@@ -28,7 +28,7 @@ class ImageFileMapper:
         self.config = config.data
         self.combined_dir = Path(self.config.combined_dir)
         self.images_dir = Path(self.config.images_dir)
-        self.base_url = "https://api.nasa.gov/EPIC/archive/natural"
+        self.base_url = "https://epic.gsfc.nasa.gov/archive/enhanced"
         
     def load_consolidated_metadata(self) -> Dict[str, List[dict]]:
         """Load all consolidated metadata files."""
@@ -94,7 +94,7 @@ class ImageFileMapper:
                 return True
             
             # Construct download URL
-            # EPIC archive URL structure: https://api.nasa.gov/EPIC/archive/natural/2023/01/01/epic_1b_20230101000101.png
+            # EPIC archive URL structure: https://epic.gsfc.nasa.gov/archive/enhanced/2023/01/01/epic_RGB_20230101000101.png
             year, month, day = date[:4], date[5:7], date[8:10]
             
             # Ensure image_name includes .png extension
