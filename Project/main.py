@@ -182,15 +182,20 @@ def evaluate_model(config, model_path: str):
     all_targets = torch.cat(all_targets, dim=0)
     
     # Calculate metrics - compare normalized predictions with normalized targets
+    # Note: all_predictions are already normalized from model output
+    # all_targets are in real-world coordinates, so we need to normalize them
     targets_norm = normalizer.normalize(all_targets)
     mse_loss = torch.nn.functional.mse_loss(all_predictions, targets_norm)
     
     # Denormalize both predictions and targets for coordinate error calculation
     pred_coords = normalizer.denormalize(all_predictions)
-    true_coords = normalizer.denormalize(all_targets)
+    true_coords = all_targets  # Already in real-world coordinates
     
     # Calculate coordinate errors using proper longitude wraparound handling
     coord_errors = normalizer.compute_coordinate_error_degrees(pred_coords, true_coords)
+    
+    # Calculate Haversine distance for geographic accuracy
+    haversine_distances = normalizer.compute_haversine_distance(pred_coords, true_coords)
     
     # Also get individual errors for reporting
     lon_errors = normalizer.compute_longitude_error(pred_coords[:, 0], true_coords[:, 0])
@@ -200,6 +205,7 @@ def evaluate_model(config, model_path: str):
     coord_errors_cpu = coord_errors.abs().cpu()
     lon_errors_cpu = lon_errors.abs().cpu()
     lat_errors_cpu = lat_errors.abs().cpu()
+    haversine_cpu = haversine_distances.abs().cpu()
     
     logger.info(f"Test MSE: {mse_loss:.6f}")
     logger.info(f"Mean coordinate error: {coord_errors_cpu.mean():.3f} degrees")
@@ -211,34 +217,48 @@ def evaluate_model(config, model_path: str):
     logger.info(f"Min coordinate error: {coord_errors_cpu.min():.3f} degrees")
     logger.info(f"Max coordinate error: {coord_errors_cpu.max():.3f} degrees")
     
-    # Use CPU tensors for visualization
-    pred_coords_cpu = pred_coords.cpu()
-    true_coords_cpu = true_coords.cpu()
-    coord_errors_cpu = coord_errors.cpu()
+    # Haversine distance statistics (geographic accuracy)
+    logger.info(f"Mean Haversine distance: {haversine_cpu.mean():.1f} km")
+    logger.info(f"Median Haversine distance: {haversine_cpu.median():.1f} km")
+    logger.info(f"Min Haversine distance: {haversine_cpu.min():.1f} km")
+    logger.info(f"Max Haversine distance: {haversine_cpu.max():.1f} km")
     
     # Create visualizations
     from visualization import plot_coordinate_predictions, plot_error_distribution, plot_predictions_on_world_map
+    from evaluation_reporter import EvaluationReporter
     
     output_dir = Path("outputs")
     output_dir.mkdir(exist_ok=True)
     
+    # Normalize targets for visualization functions (predictions are already normalized)
+    targets_norm = normalizer.normalize(all_targets)
+    
     plot_coordinate_predictions(
-        all_targets.cpu(), all_predictions.cpu(),
+        targets_norm.cpu(), all_predictions.cpu(),
         save_path=str(output_dir / "coordinate_predictions.png"),
         show_plot=False
     )
     
     plot_error_distribution(
-        all_targets.cpu(), all_predictions.cpu(),
+        targets_norm.cpu(), all_predictions.cpu(),
         save_path=str(output_dir / "error_distribution.png"),
         show_plot=False
     )
     
     plot_predictions_on_world_map(
-        all_targets.cpu(), all_predictions.cpu(),
+        targets_norm.cpu(), all_predictions.cpu(),
         save_path=str(output_dir / "world_map_predictions.png"),
         show_plot=False
     )
+    
+    # Generate comprehensive evaluation report
+    reporter = EvaluationReporter(model_path, config)
+    report_path = reporter.generate_comprehensive_report(
+        all_predictions, all_targets, float(mse_loss), str(output_dir)
+    )
+    reporter.print_summary()
+    
+    logger.info(f"Evaluation complete! Report saved to: {report_path}")
 
 
 def main():

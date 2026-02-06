@@ -234,11 +234,20 @@ def create_dataloaders(
 class CoordinateNormalizer:
     """Normalizes and denormalizes coordinate values."""
     
-    def __init__(self):
-        self.lat_min = -90.0
-        self.lat_max = 90.0
-        self.lon_min = -180.0
-        self.lon_max = 180.0
+    def __init__(self, dataset_coords=None):
+        # Use full coordinate ranges or dataset-specific ranges
+        if dataset_coords is not None:
+            coords_array = dataset_coords.clone().detach()
+            self.lon_min = coords_array[:, 0].min().item()
+            self.lon_max = coords_array[:, 0].max().item()
+            self.lat_min = coords_array[:, 1].min().item()
+            self.lat_max = coords_array[:, 1].max().item()
+        else:
+            # Global coordinate ranges
+            self.lon_min = -180.0
+            self.lon_max = 180.0
+            self.lat_min = -90.0
+            self.lat_max = 90.0
     
     def normalize(self, coords: torch.Tensor) -> torch.Tensor:
         """Normalize coordinates to [0, 1] range."""
@@ -297,3 +306,31 @@ class CoordinateNormalizer:
         distance_error = torch.sqrt(lon_error**2 + lat_error**2)
         
         return distance_error
+    
+    def compute_haversine_distance(self, pred_coords: torch.Tensor, true_coords: torch.Tensor) -> torch.Tensor:
+        """Compute Haversine distance between coordinates in kilometers."""
+        # Convert degrees to radians
+        pred_lon, pred_lat = pred_coords[:, 0], pred_coords[:, 1]
+        true_lon, true_lat = true_coords[:, 0], true_coords[:, 1]
+        
+        pred_lon_rad = torch.deg2rad(pred_lon)
+        pred_lat_rad = torch.deg2rad(pred_lat)
+        true_lon_rad = torch.deg2rad(true_lon)
+        true_lat_rad = torch.deg2rad(true_lat)
+        
+        # Earth radius in kilometers
+        R = 6371.0
+        
+        # Haversine formula
+        dlat = true_lat_rad - pred_lat_rad
+        dlon = true_lon_rad - pred_lon_rad
+        
+        # Handle longitude wraparound in radians
+        dlon = torch.where(dlon > torch.pi, dlon - 2*torch.pi, dlon)
+        dlon = torch.where(dlon < -torch.pi, dlon + 2*torch.pi, dlon)
+        
+        a = torch.sin(dlat/2)**2 + torch.cos(pred_lat_rad) * torch.cos(true_lat_rad) * torch.sin(dlon/2)**2
+        c = 2 * torch.asin(torch.sqrt(a))
+        
+        distance = R * c
+        return distance

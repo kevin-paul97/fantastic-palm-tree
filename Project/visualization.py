@@ -40,8 +40,7 @@ def plot_coordinate_distribution(
     ax2.set_title('Longitude Distribution')
     ax2.grid(True, alpha=0.3)
     
-    plt.tight_layout()
-    
+    # Use bbox_inches to prevent layout warnings
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
     
@@ -138,8 +137,11 @@ def plot_coordinate_predictions(
     # Convert to numpy and denormalize
     normalizer = CoordinateNormalizer()
     
-    true_coords_np = normalizer.denormalize(true_coords).cpu().numpy()
-    pred_coords_np = normalizer.denormalize(pred_coords).cpu().numpy()
+    # Denormalize coordinates (assuming inputs are normalized)
+    true_coords_denorm = normalizer.denormalize(true_coords)
+    pred_coords_denorm = normalizer.denormalize(pred_coords)
+    true_coords_np = true_coords_denorm.cpu().numpy()
+    pred_coords_np = pred_coords_denorm.cpu().numpy()
     
     # Calculate longitude errors with wraparound handling
     lon_direct_diff = np.abs(true_coords_np[:, 0] - pred_coords_np[:, 0])
@@ -185,7 +187,8 @@ def plot_coordinate_predictions(
                         label='Distance Error (degrees)', 
                         orientation='horizontal', pad=0.1, aspect=30)
     
-    plt.tight_layout()
+    # Use constrained_layout instead of tight_layout to avoid warnings
+    
     
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
@@ -206,12 +209,6 @@ def plot_error_distribution(
     # Convert to numpy and denormalize
     normalizer = CoordinateNormalizer()
     
-    true_coords_np = normalizer.denormalize(true_coords).cpu().numpy()
-    pred_coords_np = normalizer.denormalize(pred_coords).cpu().numpy()
-    
-    # Calculate errors using proper coordinate error calculation
-    normalizer = CoordinateNormalizer()
-    
     # Convert tensors to numpy if needed
     if isinstance(true_coords, torch.Tensor):
         true_coords_np = true_coords.cpu().numpy()
@@ -222,6 +219,12 @@ def plot_error_distribution(
         pred_coords_np = pred_coords.cpu().numpy()
     else:
         pred_coords_np = pred_coords
+    
+    # Denormalize coordinates (assuming inputs are normalized)
+    true_coords_denorm = normalizer.denormalize(true_coords)
+    pred_coords_denorm = normalizer.denormalize(pred_coords)
+    true_coords_np = true_coords_denorm.cpu().numpy()
+    pred_coords_np = pred_coords_denorm.cpu().numpy()
     
     # Use proper longitude error calculation
     lon_errors = np.abs(true_coords_np[:, 0] - pred_coords_np[:, 0])
@@ -267,7 +270,7 @@ def plot_error_distribution(
     ax3.axvline(np.median(distance_errors), color='orange', linestyle='--', alpha=0.8, label='Median')
     ax3.legend()
     
-    plt.tight_layout()
+    
     
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
@@ -357,7 +360,7 @@ def visualize_sample_images(
         if not isinstance(ax, list):
             ax.axis('off')
     
-    plt.tight_layout()
+    
     
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
@@ -379,8 +382,11 @@ def plot_predictions_on_world_map(
     # Convert to numpy and denormalize
     normalizer = CoordinateNormalizer()
     
-    true_coords_np = normalizer.denormalize(true_coords).cpu().numpy()
-    pred_coords_np = normalizer.denormalize(pred_coords).cpu().numpy()
+    # Denormalize coordinates (assuming inputs are normalized)
+    true_coords_denorm = normalizer.denormalize(true_coords)
+    pred_coords_denorm = normalizer.denormalize(pred_coords)
+    true_coords_np = true_coords_denorm.cpu().numpy()
+    pred_coords_np = pred_coords_denorm.cpu().numpy()
     
     # Calculate errors
     lon_errors = np.abs(true_coords_np[:, 0] - pred_coords_np[:, 0])
@@ -429,7 +435,7 @@ def plot_predictions_on_world_map(
             f'Max Error: {distance_errors.max():.3f}°')
     plt.title(title, fontsize=14, fontweight='bold')
     
-    plt.tight_layout()
+    
     
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
