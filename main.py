@@ -6,6 +6,7 @@ import logging
 import argparse
 import torch
 from pathlib import Path
+from typing import Optional
 
 from config import Config
 from data import EPICDataDownloader, CoordinateExtractor
@@ -262,7 +263,7 @@ def evaluate_model(config, model_path: str):
 
 
 def download_recent_images(config, num_days: int = 7):
-    """Download most recent satellite images."""
+    """Download most recent satellite images including actual image files."""
     logger.info(f"Downloading most recent {num_days} days of satellite images...")
     
     downloader = EPICDataDownloader(config)
@@ -298,45 +299,78 @@ def download_recent_images(config, num_days: int = 7):
 
 
 def download_latest_images(config, num_images: int = 100):
-    """Download latest N satellite images."""
+    """Download latest N satellite images including actual image files."""
     logger.info(f"Downloading latest {num_images} satellite images...")
     
+    # First download metadata
     downloader = EPICDataDownloader(config)
-    success = downloader.download_latest_images(num_images)
+    metadata_success = downloader.download_latest_images(num_images)
+    
+    if metadata_success:
+        # Then download actual images
+        from data import ImageDownloader
+        image_downloader = ImageDownloader(config)
+        image_success = image_downloader.download_images_from_metadata(max_images=num_images)
+        
+        if image_success:
+            logger.info("Latest images downloaded successfully!")
+            # Extract and visualize coordinates
+            extractor = CoordinateExtractor(config)
+            lat_coords, lon_coords = extractor.extract_coordinates()
+            
+            # Create visualizations
+            output_dir = Path("outputs")
+            output_dir.mkdir(exist_ok=True)
+            
+            plot_coordinate_distribution(
+                lat_coords, lon_coords,
+                save_path=str(output_dir / "latest_coordinate_distribution.png"),
+                show_plot=False
+            )
+            
+            plot_world_map_with_coordinates(
+                lat_coords, lon_coords,
+                save_path=str(output_dir / "latest_world_map.png"),
+                show_plot=False
+            )
+            
+            # Print statistics
+            stats = create_coordinate_statistics_table(lat_coords, lon_coords)
+            logger.info("Latest Images Coordinate Statistics:\n" + str(stats))
+        else:
+            logger.error("Failed to download image files")
+    else:
+        logger.error("Failed to download latest images metadata")
+
+
+def download_images_only(config, num_images: Optional[int] = None, num_days: Optional[int] = None):
+    """Download only image files (no metadata processing) - downloads oldest available images first."""
+    from data import ImageDownloader
+    
+    image_downloader = ImageDownloader(config)
+    
+    if num_days:
+        logger.info(f"Downloading images for oldest {num_days} days...")
+        success = image_downloader.download_recent_images(num_days)
+    elif num_images:
+        logger.info(f"Downloading oldest {num_images} images available...")
+        success = image_downloader.download_images_from_metadata(max_images=num_images)
+    else:
+        logger.info("Downloading all available images (oldest first)...")
+        success = image_downloader.download_images_from_metadata()
     
     if success:
-        logger.info("Latest images downloaded successfully!")
-        # Extract and visualize coordinates
-        extractor = CoordinateExtractor(config)
-        lat_coords, lon_coords = extractor.extract_coordinates()
-        
-        # Create visualizations
-        output_dir = Path("outputs")
-        output_dir.mkdir(exist_ok=True)
-        
-        plot_coordinate_distribution(
-            lat_coords, lon_coords,
-            save_path=str(output_dir / "latest_coordinate_distribution.png"),
-            show_plot=False
-        )
-        
-        plot_world_map_with_coordinates(
-            lat_coords, lon_coords,
-            save_path=str(output_dir / "latest_world_map.png"),
-            show_plot=False
-        )
-        
-        # Print statistics
-        stats = create_coordinate_statistics_table(lat_coords, lon_coords)
-        logger.info("Latest Images Coordinate Statistics:\n" + str(stats))
+        logger.info("Image download completed successfully!")
     else:
-        logger.error("Failed to download latest images")
+        logger.error("Failed to download images")
+    
+    return success
 
 
 def main():
     """Main function."""
     parser = argparse.ArgumentParser(description="Satellite Image Coordinate Prediction")
-    parser.add_argument("--mode", choices=["setup", "train_regressor", "train_autoencoder", "evaluate", "download_recent", "download_latest"], 
+    parser.add_argument("--mode", choices=["setup", "train_regressor", "train_autoencoder", "evaluate", "download_recent", "download_latest", "download_images"], 
                        default="train_regressor", help="Mode to run")
     parser.add_argument("--config", type=str, help="Path to config file")
     parser.add_argument("--model_path", type=str, help="Path to trained model for evaluation")
@@ -348,9 +382,9 @@ def main():
     parser.add_argument("--no-tensorboard", action="store_true", 
                        help="Disable automatic TensorBoard launch")
     parser.add_argument("--num_days", type=int, default=7, 
-                       help="Number of most recent days to download (for download_recent mode)")
+                       help="Number of most recent days to download (for download_recent/download_images mode)")
     parser.add_argument("--num_images", type=int, default=100, 
-                       help="Number of latest images to download (for download_latest mode)")
+                       help="Number of latest images to download (for download_latest/download_images mode)")
     
     args = parser.parse_args()
     
@@ -400,6 +434,11 @@ def main():
         download_recent_images(config, args.num_days)
     elif args.mode == "download_latest":
         download_latest_images(config, args.num_images)
+    elif args.mode == "download_images":
+        if args.num_days:
+            download_images_only(config, num_days=args.num_days)
+        else:
+            download_images_only(config, num_images=args.num_images)
 
 
 if __name__ == "__main__":

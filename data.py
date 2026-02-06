@@ -102,74 +102,52 @@ class EPICDataDownloader:
         return success_count > 0
     
     def download_recent_images(self, num_days: int = 7, progress_callback=None) -> bool:
-        """Download the most recent images via newest metadata dates."""
-        try:
-            metadata = self.load_metadata()
-            dates = self.extract_dates(metadata)
-            
-            # Get the most recent dates
-            recent_dates = dates[-num_days:]  # Last N dates
-            logger.info(f"Downloading images for {len(recent_dates)} most recent dates")
-            
-            success_count = 0
-            for i, date in enumerate(recent_dates):
-                logger.info(f"Downloading data for {date} ({i+1}/{len(recent_dates)})")
-                if self.download_daily_data(date):
-                    success_count += 1
-                
-                if progress_callback:
-                    progress_callback(i + 1, len(recent_dates))
-            
-            logger.info(f"Downloaded data for {success_count}/{len(recent_dates)} recent dates")
-            
-            # Auto-consolidate after downloading
-            if success_count > 0:
-                self.consolidate_metadata()
-            
-            return success_count > 0
-            
-        except Exception as e:
-            logger.error(f"Failed to download recent images: {e}")
-            return False
+        """Download most recent images including actual image files."""
+        # First, download metadata
+        metadata_success = self.download_all_images(progress_callback)
+        
+        if metadata_success:
+            # Then download the actual image files
+            from config import Config
+            config = Config()
+            config.data = self.config
+            image_downloader = ImageDownloader(config)
+            return image_downloader.download_recent_images(num_days, progress_callback)
+        
+        return False
     
     def download_latest_images(self, num_images: int = 100) -> bool:
         """Download the latest N images from the most recent dates."""
-        try:
-            metadata = self.load_metadata()
-            dates = self.extract_dates(metadata)
+        metadata = self.load_metadata()
+        dates = self.extract_dates(metadata)
+        
+        # Start from the most recent date and work backwards
+        downloaded_images = 0
+        target_date_idx = len(dates) - 1
+        
+        while downloaded_images < num_images and target_date_idx >= 0:
+            date = dates[target_date_idx]
+            logger.info(f"Downloading date {date} for more images ({downloaded_images}/{num_images})")
             
-            # Start from the most recent date and work backwards
-            downloaded_images = 0
-            target_date_idx = len(dates) - 1
-            
-            while downloaded_images < num_images and target_date_idx >= 0:
-                date = dates[target_date_idx]
-                logger.info(f"Downloading date {date} for more images ({downloaded_images}/{num_images})")
+            if self.download_daily_data(date):
+                # Check how many images we got from this date
+                date_dir = self.images_dir / date
+                daily_json = date_dir / f"{date}.json"
                 
-                if self.download_daily_data(date):
-                    # Check how many images we got from this date
-                    date_dir = self.images_dir / date
-                    daily_json = date_dir / f"{date}.json"
-                    
-                    if daily_json.exists():
-                        with open(daily_json, 'r') as f:
-                            daily_data = json.load(f)
-                            images_in_date = len(daily_data)
-                            downloaded_images += images_in_date
-                            logger.info(f"Got {images_in_date} images from {date}")
-                
-                target_date_idx -= 1
+                if daily_json.exists():
+                    with open(daily_json, 'r') as f:
+                        daily_data = json.load(f)
+                        images_in_date = len(daily_data)
+                        downloaded_images += images_in_date
+                        logger.info(f"Got {images_in_date} images from {date}")
             
-            # Auto-consolidate after downloading
-            if downloaded_images > 0:
-                self.consolidate_metadata()
-            
-            logger.info(f"Downloaded {downloaded_images} images total")
-            return downloaded_images > 0
-            
-        except Exception as e:
-            logger.error(f"Failed to download latest images: {e}")
-            return False
+            target_date_idx -= 1
+        
+        # Auto-consolidate after downloading
+        if downloaded_images > 0:
+            self.consolidate_metadata()
+        
+        return downloaded_images > 0
     
     def consolidate_metadata(self) -> bool:
         """Consolidate all daily JSON files into combined directory."""
@@ -249,53 +227,89 @@ class CoordinateExtractor:
 
 
 class ImageDownloader:
-    """Downloads actual image files based on metadata."""
+    """Downloads actual image files based on metadata with API authentication."""
     
     def __init__(self, config):
         self.config = config.data
-        self.download_dir = Path(self.config.download_dir)
+        self.images_dir = Path(self.config.images_dir)
+        
+        # Set up authenticated session
+        self.session = requests.Session()
+        try:
+            from github_config_loader import get_authenticated_requests_session
+            auth_session = get_authenticated_requests_session()
+            if auth_session is not None:
+                self.session = auth_session
+                logger.info("Using authenticated requests session")
+            else:
+                logger.warning("API key manager returned None, using unauthenticated requests")
+        except ImportError:
+            logger.warning("API key manager not available, using unauthenticated requests")
     
     def download_image(self, image_name: str, date: str) -> bool:
-        """Download a single image."""
+        """Download a single image with proper filename handling."""
         try:
-            # Construct image URL
-            url = f"https://epic.gsfc.nasa.gov/archive/enhanced/{date[:4]}/{date[5:7]}/{date[8:10]}/png/{image_name}.png"
+            # Ensure image_name has .png extension
+            if not image_name.endswith('.png'):
+                image_name = f"{image_name}.png"
             
-            # Create target directory
-            target_dir = self.download_dir / "earth"
-            target_dir.mkdir(parents=True, exist_ok=True)
+            # Construct proper EPIC archive URL with API key
+            # Use image name as-is from metadata, ensure .png extension
+            year, month, day = date[:4], date[5:7], date[8:10]
+            if not image_name.endswith('.png'):
+                image_name = f"{image_name}.png"
             
-            # Download image
-            response = requests.get(url, timeout=30)
+            # Add API key as query parameter
+            from github_config_loader import load_api_key_from_github_config
+            api_key = load_api_key_from_github_config()
+            
+            # Correct NASA API format: https://api.nasa.gov/EPIC/archive/natural/2019/05/30/png/epic_1b_20190530011359.png?api_key=KEY
+            url = f"https://api.nasa.gov/EPIC/archive/natural/{year}/{month}/{day}/png/{image_name}?api_key={api_key}"
+            
+            # Create target directory structure: images/YYYY-MM-DD/
+            date_dir = self.images_dir / date
+            date_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Save image with proper filename
+            image_path = date_dir / image_name
+            
+            # Skip if already exists
+            if image_path.exists():
+                logger.debug(f"Image already exists: {image_path}")
+                return True
+            
+            # Download image with authentication
+            response = self.session.get(url, timeout=30)
             response.raise_for_status()
             
-            # Save image
-            image_path = target_dir / f"{image_name}.png"
             with open(image_path, 'wb') as f:
                 f.write(response.content)
             
+            logger.debug(f"Successfully downloaded: {image_path}")
             return True
             
-        except Exception as e:
+        except requests.exceptions.RequestException as e:
             logger.error(f"Failed to download {image_name}: {e}")
             return False
+        except Exception as e:
+            logger.error(f"Unexpected error downloading {image_name}: {e}")
+            return False
     
-    def download_images_from_metadata(self, progress_callback=None) -> bool:
-        """Download all images from metadata files."""
+    def download_images_from_date(self, date: str, progress_callback=None) -> Tuple[int, int]:
+        """Download all images from a specific date metadata."""
         combined_dir = Path(self.config.combined_dir)
+        metadata_file = combined_dir / f"{date}.json"
         
-        if not combined_dir.exists():
-            raise FileNotFoundError("Combined metadata directory not found")
+        if not metadata_file.exists():
+            logger.warning(f"Metadata file not found for date {date}")
+            return 0, 0
         
-        image_count = 0
-        success_count = 0
-        
-        # Process all metadata files
-        for json_file in combined_dir.glob("*.json"):
-            with open(json_file, 'r') as f:
+        try:
+            with open(metadata_file, 'r') as f:
                 data = json.load(f)
             
-            date = json_file.stem
+            image_count = 0
+            success_count = 0
             
             for item in data:
                 image_name = item.get("image")
@@ -306,6 +320,92 @@ class ImageDownloader:
                 
                 if progress_callback:
                     progress_callback(success_count, image_count)
+            
+            logger.info(f"Downloaded {success_count}/{image_count} images for {date}")
+            return success_count, image_count
+            
+        except Exception as e:
+            logger.error(f"Failed to process metadata for {date}: {e}")
+            return 0, 0
+    
+    def download_images_from_metadata(self, progress_callback=None, max_images: Optional[int] = None) -> bool:
+        """Download images from oldest metadata files first."""
+        combined_dir = Path(self.config.combined_dir)
         
-        logger.info(f"Downloaded {success_count}/{image_count} images")
-        return success_count > 0
+        if not combined_dir.exists():
+            raise FileNotFoundError("Combined metadata directory not found")
+        
+        # Get all metadata files in chronological order (oldest first)
+        json_files = sorted(combined_dir.glob("*.json"))
+        if not json_files:
+            logger.error("No metadata files found")
+            return False
+        
+        total_images = 0
+        total_success = 0
+        
+        # Process each date's metadata from oldest to newest
+        for json_file in json_files:
+            date = json_file.stem
+            
+            try:
+                with open(json_file, 'r') as f:
+                    data = json.load(f)
+                
+                # Count images for this date
+                date_images = [item for item in data if item.get("image")]
+                date_image_count = len(date_images)
+                
+                # Check if we've hit the limit
+                if max_images and (total_images + date_image_count) > max_images:
+                    # Only download up to the limit
+                    remaining_images = max_images - total_images
+                    date_images = date_images[:remaining_images]
+                    date_image_count = remaining_images
+                
+                # Download images for this date
+                for item in date_images:
+                    image_name = item.get("image")
+                    if image_name:
+                        total_images += 1
+                        if self.download_image(image_name, date):
+                            total_success += 1
+                    
+                    if progress_callback:
+                        progress_callback(total_success, total_images)
+                
+                # Stop if we've reached the limit
+                if max_images and total_images >= max_images:
+                    break
+                    
+            except Exception as e:
+                logger.error(f"Failed to process {json_file}: {e}")
+                continue
+        
+        logger.info(f"Oldest-first download complete: {total_success}/{total_images} images")
+        return total_success > 0
+    
+    def download_recent_images(self, num_days: int = 7, progress_callback=None) -> bool:
+        """Download images from the oldest N days instead of recent."""
+        combined_dir = Path(self.config.combined_dir)
+        
+        if not combined_dir.exists():
+            raise FileNotFoundError("Combined metadata directory not found")
+        
+        # Get oldest metadata files first
+        json_files = sorted(combined_dir.glob("*.json"))
+        oldest_files = json_files[:num_days] if len(json_files) >= num_days else json_files
+        
+        total_images = 0
+        total_success = 0
+        
+        for json_file in oldest_files:
+            date = json_file.stem
+            logger.info(f"Downloading images for {date} (oldest available)")
+            
+            success, count = self.download_images_from_date(date, progress_callback)
+            total_success += success
+            total_images += count
+        
+        logger.info(f"Oldest images download complete: {total_success}/{total_images} images")
+        return total_success > 0
