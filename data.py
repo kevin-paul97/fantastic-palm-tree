@@ -353,7 +353,7 @@ class ImageDownloader:
                 date_images = [item for item in data if item.get("image")]
                 date_image_count = len(date_images)
                 
-                # Check if we've hit the limit
+                # Check if we've hit the limit BEFORE processing this date
                 if max_images and (total_images + date_image_count) > max_images:
                     # Only download up to the limit
                     remaining_images = max_images - total_images
@@ -370,8 +370,12 @@ class ImageDownloader:
                     
                     if progress_callback:
                         progress_callback(total_success, total_images)
-                
-                # Stop if we've reached the limit
+                    
+                    # Stop processing dates if we've reached the limit
+                    if max_images and total_images >= max_images:
+                        break
+                        
+                # Break out of outer loop if limit reached
                 if max_images and total_images >= max_images:
                     break
                     
