@@ -9,36 +9,46 @@ from typing import List, Optional
 
 
 class LocationRegressor(nn.Module):
-    """
-    A regression model to predict the location of a given image with two output nodes.
-    The CNN model sees the image in black and white and predicts the x and y coordinates 
-    (centroid of the earth). It has two output nodes, one for x and one for y.
-    """
+    """CNN for predicting latitude and longitude from satellite images."""
     
     def __init__(
         self,
-        input_channels: int = 1,
+        input_channels: Optional[int] = None,
         conv_channels: Optional[List[int]] = None,
         kernel_size: int = 3,
         pool_size: int = 4,
         activation: str = "tanh",
         hidden_dim: int = 128,
         output_dim: int = 2,
-        dropout_rate: float = 0.2
+        dropout_rate: float = 0.2,
+        config=None
     ):
         super(LocationRegressor, self).__init__()
         
-        if conv_channels is None:
-            conv_channels = [64, 128, 256]
-        
-        self.input_channels = input_channels
-        self.conv_channels = conv_channels
-        self.kernel_size = kernel_size
-        self.pool_size = pool_size
-        self.activation = activation.lower()
-        self.hidden_dim = hidden_dim
-        self.output_dim = output_dim
-        self.dropout_rate = dropout_rate
+        # Handle config object or individual parameters
+        if config is not None:
+            self.input_channels = config.input_channels
+            self.conv_channels = config.conv_channels
+            self.kernel_size = config.kernel_size
+            self.pool_size = config.pool_size
+            self.activation = config.activation.lower()
+            self.hidden_dim = config.hidden_dim
+            self.output_dim = config.output_dim
+            self.dropout_rate = dropout_rate
+        else:
+            if conv_channels is None:
+                conv_channels = [64, 128, 256]
+            if input_channels is None:
+                input_channels = 1  # Default grayscale
+            
+            self.input_channels = input_channels
+            self.conv_channels = conv_channels
+            self.kernel_size = kernel_size
+            self.pool_size = pool_size
+            self.activation = activation.lower()
+            self.hidden_dim = hidden_dim
+            self.output_dim = output_dim
+            self.dropout_rate = dropout_rate
         
         # Build convolutional layers
         self.conv_layers = self._build_conv_layers()
@@ -131,18 +141,26 @@ class AutoEncoder(nn.Module):
     
     def __init__(
         self,
-        input_channels: int = 1,
+        input_channels: Optional[int] = None,
         encoded_dim: int = 128,
-        dropout_rate: float = 0.2
+        dropout_rate: float = 0.2,
+        config=None
     ):
         super(AutoEncoder, self).__init__()
         
-        self.input_channels = input_channels
-        self.encoded_dim = encoded_dim
+        # Handle config object or individual parameters
+        if config is not None:
+            self.input_channels = config.input_channels
+            self.encoded_dim = encoded_dim
+        else:
+            if input_channels is None:
+                input_channels = 1  # Default grayscale
+            self.input_channels = input_channels
+            self.encoded_dim = encoded_dim
         
         # Encoder
         self.encoder = nn.Sequential(
-            nn.Conv2d(input_channels, 32, 3, padding=1),
+            nn.Conv2d(self.input_channels, 32, 3, padding=1),
             nn.ReLU(),
             nn.MaxPool2d(2),
             nn.Conv2d(32, 64, 3, padding=1),
@@ -160,7 +178,7 @@ class AutoEncoder(nn.Module):
         
         # Decoder
         self.decoder = nn.Sequential(
-            nn.Linear(encoded_dim, 512),
+            nn.Linear(self.encoded_dim, 512),
             nn.ReLU(),
             nn.Dropout(dropout_rate),
             nn.Linear(512, 8 * 8 * 128),
@@ -170,7 +188,7 @@ class AutoEncoder(nn.Module):
             nn.ReLU(),
             nn.ConvTranspose2d(64, 32, 2, stride=2),
             nn.ReLU(),
-            nn.ConvTranspose2d(32, input_channels, 2, stride=2),
+            nn.ConvTranspose2d(32, self.input_channels, 2, stride=2),
             nn.Sigmoid()
         )
     
@@ -191,23 +209,12 @@ class AutoEncoder(nn.Module):
 
 def create_location_regressor(config) -> LocationRegressor:
     """Create a LocationRegressor model from configuration."""
-    return LocationRegressor(
-        input_channels=config.model.input_channels,
-        conv_channels=config.model.conv_channels,
-        kernel_size=config.model.kernel_size,
-        pool_size=config.model.pool_size,
-        activation=config.model.activation,
-        hidden_dim=config.model.hidden_dim,
-        output_dim=config.model.output_dim
-    )
+    return LocationRegressor(config=config.model)
 
 
 def create_autoencoder(config) -> AutoEncoder:
     """Create an AutoEncoder model from configuration."""
-    return AutoEncoder(
-        input_channels=config.model.input_channels,
-        encoded_dim=config.model.hidden_dim
-    )
+    return AutoEncoder(config=config.model)
 
 
 def count_parameters(model: nn.Module) -> int:

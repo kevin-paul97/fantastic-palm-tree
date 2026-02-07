@@ -10,6 +10,7 @@ import time
 import socket
 import logging
 import sys
+import os
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -27,54 +28,110 @@ def is_port_available(port: int) -> bool:
 
 
 def start_tensorboard(logdir: str, port: int, open_browser: bool = True):
-    """Start TensorBoard server."""
-    try:
-        if not is_port_available(port):
-            logger.info(f"TensorBoard already running on http://localhost:{port}")
-            if open_browser:
-                webbrowser.open(f"http://localhost:{port}")
-            return True
-        
-        logger.info(f"Starting TensorBoard on http://localhost:{port}")
-        logger.info(f"Log directory: {logdir}")
-        
-        cmd = [
-            'tensorboard',
-            '--logdir', logdir,
-            '--port', str(port),
-            '--host', 'localhost'
-        ]
-        
-        # Start tensorboard process
-        process = subprocess.Popen(cmd, start_new_session=True)
-        
-        # Wait a moment for tensorboard to start
-        time.sleep(3)
-        
+    """Start TensorBoard server with multiple fallback methods."""
+    
+    # Check if log directory exists
+    if not os.path.exists(logdir):
+        logger.error(f"Log directory does not exist: {logdir}")
+        return False
+    
+    if not is_port_available(port):
+        logger.info(f"TensorBoard already running on http://localhost:{port}")
         if open_browser:
             webbrowser.open(f"http://localhost:{port}")
-            logger.info("TensorBoard opened in browser")
-        
-        logger.info("TensorBoard started successfully!")
-        logger.info("Press Ctrl+C to stop TensorBoard")
-        
-        # Keep the script running
-        try:
-            process.wait()
-        except KeyboardInterrupt:
-            logger.info("Stopping TensorBoard...")
-            process.terminate()
-            process.wait()
-            logger.info("TensorBoard stopped")
-        
         return True
-        
-    except FileNotFoundError:
-        logger.error("TensorBoard not found. Install with: pip install tensorboard")
-        return False
-    except Exception as e:
-        logger.error(f"Failed to start TensorBoard: {e}")
-        return False
+    
+    logger.info(f"Starting TensorBoard on http://localhost:{port}")
+    logger.info(f"Log directory: {logdir}")
+    
+    # Try different methods to start TensorBoard
+    methods = [
+        # Method 1: Python module with tensorboard.main
+        {
+            'name': 'Python module (tensorboard.main)',
+            'cmd': [sys.executable, '-m', 'tensorboard.main', '--logdir', logdir, '--port', str(port), '--host', 'localhost']
+        },
+        # Method 2: Direct tensorboard command
+        {
+            'name': 'Direct tensorboard command',
+            'cmd': ['tensorboard', '--logdir', logdir, '--port', str(port), '--host', 'localhost']
+        },
+        # Method 3: Python module with just tensorboard
+        {
+            'name': 'Python module (tensorboard)',
+            'cmd': [sys.executable, '-m', 'tensorboard', '--logdir', logdir, '--port', str(port), '--host', 'localhost']
+        }
+    ]
+    
+    for method in methods:
+        try:
+            logger.info(f"Trying TensorBoard method: {method['name']}")
+            
+            # Test if command is available
+            test_result = subprocess.run(method['cmd'] + ['--help'], 
+                                     capture_output=True, text=True, timeout=5)
+            
+            if test_result.returncode != 0:
+                logger.warning(f"Method {method['name']} failed test, trying next method")
+                continue
+            
+            # Start tensorboard process
+            process = subprocess.Popen(
+                method['cmd'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True
+            )
+            
+            # Wait for process to start
+            time.sleep(3)
+            
+            # Check if process is still running
+            if process.poll() is None:
+                logger.info(f"TensorBoard started successfully using {method['name']}")
+                
+                if open_browser:
+                    webbrowser.open(f"http://localhost:{port}")
+                    logger.info("TensorBoard opened in browser")
+                
+                logger.info("TensorBoard started successfully!")
+                logger.info("Press Ctrl+C to stop TensorBoard")
+                
+                # Keep script running
+                try:
+                    process.wait()
+                except KeyboardInterrupt:
+                    logger.info("Stopping TensorBoard...")
+                    process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+                    logger.info("TensorBoard stopped")
+                
+                return True
+            else:
+                stdout, stderr = process.communicate()
+                logger.warning(f"Method {method['name']} failed to start TensorBoard")
+                logger.warning(f"STDERR: {stderr}")
+                continue
+                
+        except FileNotFoundError:
+            logger.warning(f"Method {method['name']} command not found")
+            continue
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Method {method['name']} timed out")
+            continue
+        except Exception as e:
+            logger.warning(f"Method {method['name']} failed: {e}")
+            continue
+    
+    # All methods failed
+    logger.error("All TensorBoard startup methods failed")
+    logger.error("Please ensure TensorBoard is installed: pip install tensorboard")
+    return False
 
 
 def stop_tensorboard(port: int):

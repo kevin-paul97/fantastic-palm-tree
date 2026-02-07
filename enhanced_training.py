@@ -5,6 +5,7 @@ Enhanced training utilities with improved TensorBoard logging and error handling
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import subprocess
 try:
     from torch.utils.tensorboard.writer import SummaryWriter
 except ImportError:
@@ -59,11 +60,30 @@ class EnhancedTrainer:
         # Setup tensorboard writer with enhanced error handling
         if SummaryWriter is not None:
             try:
+                # Ensure log directory exists and is writable
+                import os
+                os.makedirs(config.training.log_dir, exist_ok=True)
+                
+                # Test write access
+                test_file = os.path.join(config.training.log_dir, 'test_write')
+                try:
+                    with open(test_file, 'w') as f:
+                        f.write('test')
+                    os.remove(test_file)
+                except Exception as e:
+                    raise PermissionError(f"Cannot write to log directory {config.training.log_dir}: {e}")
+                
                 self.writer = SummaryWriter(
                     log_dir=config.training.log_dir,
                     comment=f'_device_{config.training.device}_batch_{config.training.batch_size}',
                     flush_secs=10  # Auto-flush every 10 seconds
                 )
+                
+                # Test writer functionality
+                self.writer.add_scalar('test/init', 1.0, 0)
+                self.writer.flush()
+                self.writer.add_scalar('test/init', 2.0, 1)
+                self.writer.flush()
                 
                 # Log configuration
                 self._log_config_to_tensorboard()
@@ -99,6 +119,12 @@ class EnhancedTrainer:
             import webbrowser
             import time
             import os
+            import sys
+            
+            # Check if log directory exists
+            if not os.path.exists(log_dir):
+                logger.warning(f"Log directory does not exist: {log_dir}")
+                return
             
             # Check if tensorboard is already running on this port
             tensorboard_port = 6006
@@ -111,50 +137,110 @@ class EnhancedTrainer:
                 
                 if result == 0:
                     logger.info(f"TensorBoard already running on http://localhost:{tensorboard_port}")
-                    webbrowser.open(f"http://localhost:{tensorboard_port}")
+                    try:
+                        webbrowser.open(f"http://localhost:{tensorboard_port}")
+                    except Exception:
+                        logger.info("Could not open browser automatically")
                     return
             except Exception:
                 pass
             
-            # Launch tensorboard
+            # Test tensorboard availability
+            test_cmd = [sys.executable, '-c', 'import tensorboard; print("OK")']
+            try:
+                result = subprocess.run(test_cmd, capture_output=True, text=True, timeout=10)
+                if result.returncode != 0:
+                    raise ImportError("TensorBoard not properly installed")
+            except Exception as e:
+                raise ImportError(f"TensorBoard not available: {e}")
+            
+            # Launch tensorboard with enhanced error handling
             cmd = [
-                'tensorboard', 
+                sys.executable, '-m', 'tensorboard.main',
                 '--logdir', log_dir,
                 '--port', str(tensorboard_port),
-                '--host', 'localhost'
+                '--host', 'localhost',
+                '--reload_interval', '5'  # Reload every 5 seconds
             ]
             
-            # Start tensorboard process
+            logger.info(f"Starting TensorBoard with command: {' '.join(cmd)}")
+            
+            # Start tensorboard process with better error handling
             self.tensorboard_process = subprocess.Popen(
                 cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
                 start_new_session=True
             )
             
-            # Wait a moment for tensorboard to start
+            # Wait for process to start and check for errors
             time.sleep(3)
             
-            # Open browser
-            webbrowser.open(f"http://localhost:{tensorboard_port}")
-            logger.info("TensorBoard opened in browser")
+            # Check if process is still running
+            if self.tensorboard_process.poll() is None:
+                logger.info("TensorBoard process started successfully")
+                try:
+                    webbrowser.open(f"http://localhost:{tensorboard_port}")
+                    logger.info("TensorBoard opened in browser")
+                except Exception:
+                    logger.info("Could not open browser automatically - open http://localhost:{tensorboard_port} manually")
+            else:
+                stdout, stderr = self.tensorboard_process.communicate()
+                logger.error(f"TensorBoard failed to start")
+                logger.error(f"STDOUT: {stdout}")
+                logger.error(f"STDERR: {stderr}")
+                self.tensorboard_process = None
+                return
             
         except ImportError:
             logger.warning("TensorBoard not available. Install with: pip install tensorboard")
         except Exception as e:
             logger.warning(f"Failed to launch TensorBoard: {e}")
+            self.tensorboard_process = None
     
     def stop_tensorboard(self) -> None:
         """Stop TensorBoard process if running."""
         if self.tensorboard_process:
             try:
-                self.tensorboard_process.terminate()
-                self.tensorboard_process.wait(timeout=5)
-                logger.info("TensorBoard stopped")
+                # Check if process is still running
+                if self.tensorboard_process.poll() is None:
+                    self.tensorboard_process.terminate()
+                    try:
+                        self.tensorboard_process.wait(timeout=5)
+                        logger.info("TensorBoard stopped gracefully")
+                    except subprocess.TimeoutExpired:
+                        self.tensorboard_process.kill()
+                        self.tensorboard_process.wait()
+                        logger.info("TensorBoard killed forcefully")
+                else:
+                    logger.info("TensorBoard process already terminated")
+                    
             except Exception as e:
                 logger.warning(f"Error stopping TensorBoard: {e}")
             finally:
                 self.tensorboard_process = None
+                
+    def cleanup(self) -> None:
+        """Clean up resources."""
+        try:
+            # Stop TensorBoard
+            self.stop_tensorboard()
+            
+            # Close TensorBoard writer
+            if self.writer is not None:
+                try:
+                    self.writer.close()
+                    logger.info("TensorBoard writer closed")
+                except Exception as e:
+                    logger.warning(f"Error closing TensorBoard writer: {e}")
+                    
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
+            
+    def __del__(self):
+        """Destructor to ensure cleanup."""
+        self.cleanup()
     
     def _log_config_to_tensorboard(self) -> None:
         """Log training configuration to TensorBoard."""
