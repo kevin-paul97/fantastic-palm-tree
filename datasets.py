@@ -42,31 +42,50 @@ class SatelliteImageDataset(Dataset):
         logger.info(f"Loaded {len(self.samples)} samples for {split} split")
     
     def _load_samples(self) -> List[Tuple[str, Tuple[float, float]]]:
-        """Load image paths and their corresponding coordinates."""
+        """Load image paths and their corresponding coordinates from date folders."""
         samples = []
         
-        for json_file in self.metadata_dir.glob("*.json"):
+        # Scan images directory for date folders
+        if not self.image_dir.exists():
+            logger.error(f"Images directory not found: {self.image_dir}")
+            return samples
+            
+        for date_dir in sorted(self.image_dir.iterdir()):
+            if not date_dir.is_dir():
+                continue
+                
+            date = date_dir.name
+            metadata_file = self.metadata_dir / f"{date}.json"
+            
+            # If no metadata file exists for this date, skip
+            if not metadata_file.exists():
+                continue
+                
             try:
-                with open(json_file, 'r') as f:
+                with open(metadata_file, 'r') as f:
                     data = json.load(f)
                 
-                date = json_file.stem
-                
+                # Create a mapping of image names to coordinates for quick lookup
+                coord_map = {}
                 for item in data:
                     image_name = item.get("image")
                     coords = item.get("centroid_coordinates", {})
                     
                     if image_name and coords.get("lat") and coords.get("lon"):
-                        image_path = self.image_dir / "earth" / f"{image_name}.png"
-                        
-                        if image_path.exists():
-                            lat = float(coords["lat"])
-                            lon = float(coords["lon"])
-                            samples.append((str(image_path), (lat, lon)))
+                        coord_map[image_name] = (float(coords["lat"]), float(coords["lon"]))
+                
+                # Match images in the date folder with coordinates
+                for image_file in date_dir.glob("*.png"):
+                    image_name = image_file.stem  # Remove .png extension
+                    
+                    if image_name in coord_map:
+                        lat, lon = coord_map[image_name]
+                        samples.append((str(image_file), (lat, lon)))
                             
             except Exception as e:
-                logger.warning(f"Error processing {json_file}: {e}")
+                logger.warning(f"Error processing {date}: {e}")
         
+        logger.info(f"Found {len(samples)} image-coordinate pairs across {len(list(self.image_dir.iterdir()))} date folders")
         return samples
     
     def _split_data(
@@ -175,7 +194,7 @@ def create_dataloaders(
     
     # Create datasets
     train_dataset = SatelliteImageDataset(
-        image_dir=config.data.download_dir,
+        image_dir=config.data.images_dir,
         metadata_dir=config.data.combined_dir,
         transform=transform,
         split="train",
@@ -184,7 +203,7 @@ def create_dataloaders(
     )
     
     val_dataset = SatelliteImageDataset(
-        image_dir=config.data.download_dir,
+        image_dir=config.data.images_dir,
         metadata_dir=config.data.combined_dir,
         transform=transform,
         split="val",
@@ -193,7 +212,7 @@ def create_dataloaders(
     )
     
     test_dataset = SatelliteImageDataset(
-        image_dir=config.data.download_dir,
+        image_dir=config.data.images_dir,
         metadata_dir=config.data.combined_dir,
         transform=transform,
         split="test",

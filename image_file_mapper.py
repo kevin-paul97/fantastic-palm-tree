@@ -28,8 +28,30 @@ class ImageFileMapper:
         self.config = config.data
         self.combined_dir = Path(self.config.combined_dir)
         self.images_dir = Path(self.config.images_dir)
-        self.base_url = "https://epic.gsfc.nasa.gov/archive/enhanced"
+        self.base_url = "https://epic.gsfc.nasa.gov/archive/natural"
         
+    def scan_images_directory(self) -> Dict[str, List[str]]:
+        """Scan images directory and return available dates with image files."""
+        images_by_date = {}
+        
+        if not self.images_dir.exists():
+            logger.error(f"Images directory not found: {self.images_dir}")
+            return {}
+        
+        # Scan date folders
+        for date_dir in sorted(self.images_dir.iterdir()):
+            if not date_dir.is_dir() or date_dir.name == ".DS_Store":
+                continue
+                
+            date = date_dir.name
+            image_files = [f.name for f in date_dir.glob("*.png")]
+            
+            if image_files:
+                images_by_date[date] = image_files
+        
+        logger.info(f"Found images for {len(images_by_date)} dates")
+        return images_by_date
+    
     def load_consolidated_metadata(self) -> Dict[str, List[dict]]:
         """Load all consolidated metadata files."""
         metadata_by_date = {}
@@ -94,7 +116,7 @@ class ImageFileMapper:
                 return True
             
             # Construct download URL
-            # EPIC archive URL structure: https://epic.gsfc.nasa.gov/archive/enhanced/2023/01/01/epic_RGB_20230101000101.png
+            # EPIC archive URL structure: https://epic.gsfc.nasa.gov/archive/natural/2023/01/01/epic_RGB_20230101000101.png
             year, month, day = date[:4], date[5:7], date[8:10]
             
             # Ensure image_name includes .png extension
@@ -130,7 +152,13 @@ class ImageFileMapper:
         
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Load consolidated metadata
+        # Scan images directory for existing images
+        images_by_date = self.scan_images_directory()
+        if not images_by_date:
+            logger.error("No images found in directory")
+            return False
+        
+        # Load consolidated metadata for coordinates
         metadata_by_date = self.load_consolidated_metadata()
         if not metadata_by_date:
             logger.error("No consolidated metadata found")
@@ -140,23 +168,34 @@ class ImageFileMapper:
         successful_downloads = 0
         
         # Count total images first
-        for date, images in metadata_by_date.items():
-            total_images += len(images)
+        for date, image_files in images_by_date.items():
+            if date in metadata_by_date:
+                total_images += len(image_files)
         
         if max_images:
             total_images = min(total_images, max_images)
-            logger.info(f"Will download up to {max_images} images")
+            logger.info(f"Will process up to {max_images} images")
         
-        logger.info(f"Starting download of {total_images} images...")
+        logger.info(f"Starting processing of {total_images} images...")
         
-        # Download images with progress bar
-        with tqdm(total=total_images, desc="Downloading images") as pbar:
-            for date, images in metadata_by_date.items():
-                for image_data in images:
+        # Process images with progress bar
+        with tqdm(total=total_images, desc="Processing images") as pbar:
+            for date, image_files in images_by_date.items():
+                if date not in metadata_by_date:
+                    continue
+                    
+                for image_file in image_files:
                     if max_images and successful_downloads >= max_images:
                         break
                     
-                    if self.download_image(image_data, output_dir):
+                    # Find matching metadata for this image
+                    image_data = None
+                    for img_data in metadata_by_date[date]:
+                        if img_data.get('image') == image_file.replace('.png', ''):
+                            image_data = img_data
+                            break
+                    
+                    if image_data and self.download_image(image_data, output_dir):
                         successful_downloads += 1
                     
                     pbar.update(1)

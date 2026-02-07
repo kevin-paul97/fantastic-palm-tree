@@ -5,8 +5,10 @@ Data downloading and processing utilities for NASA EPIC satellite images.
 import json
 import os
 import shutil
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict, Any
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import pandas as pd
 from pathlib import Path
 import logging
@@ -27,8 +29,19 @@ class EPICDataDownloader:
     def download_metadata(self) -> bool:
         """Download the complete metadata file from NASA EPIC API."""
         try:
+            # Setup retry strategy
+            retry_strategy = Retry(
+                total=3,
+                backoff_factor=1,
+                status_forcelist=[429, 500, 502, 503, 504],
+            )
+            adapter = HTTPAdapter(max_retries=retry_strategy)
+            session = requests.Session()
+            session.mount("http://", adapter)
+            session.mount("https://", adapter)
+            
             url = f"{self.base_url}/all"
-            response = requests.get(url, timeout=30)
+            response = session.get(url, timeout=60)
             response.raise_for_status()
             
             # Create directories
@@ -66,8 +79,19 @@ class EPICDataDownloader:
     def download_daily_data(self, date: str) -> bool:
         """Download image data for a specific date."""
         try:
+            # Setup retry strategy
+            retry_strategy = Retry(
+                total=3,
+                backoff_factor=1,
+                status_forcelist=[429, 500, 502, 503, 504],
+            )
+            adapter = HTTPAdapter(max_retries=retry_strategy)
+            session = requests.Session()
+            session.mount("http://", adapter)
+            session.mount("https://", adapter)
+            
             url = f"{self.base_url}/date/{date}"
-            response = requests.get(url, timeout=30)
+            response = session.get(url, timeout=60)
             response.raise_for_status()
             
             # Create date directory
@@ -148,6 +172,39 @@ class EPICDataDownloader:
             self.consolidate_metadata()
         
         return downloaded_images > 0
+    
+    def scan_available_data(self) -> Dict[str, Any]:
+        """Scan images directory and return available dates and statistics."""
+        stats = {
+            "total_dates": 0,
+            "total_images": 0,
+            "available_dates": [],
+            "images_per_date": {}
+        }
+        
+        if not self.images_dir.exists():
+            logger.warning(f"Images directory not found: {self.images_dir}")
+            return stats
+            
+        # Scan date folders
+        date_dirs = [d for d in self.images_dir.iterdir() 
+                    if d.is_dir() and d.name != ".DS_Store"]
+        date_dirs.sort()
+        
+        for date_dir in date_dirs:
+            date = date_dir.name
+            image_files = list(date_dir.glob("*.png"))
+            image_count = len(image_files)
+            
+            if image_count > 0:
+                stats["available_dates"].append(date)
+                stats["images_per_date"][date] = image_count
+                stats["total_images"] += image_count
+        
+        stats["total_dates"] = len(stats["available_dates"])
+        
+        logger.info(f"Found {stats['total_images']} images across {stats['total_dates']} dates")
+        return stats
     
     def consolidate_metadata(self) -> bool:
         """Consolidate all daily JSON files into combined directory."""
@@ -260,8 +317,8 @@ class ImageDownloader:
                 image_name = f"{image_name}.png"
             
             # Use the original EPIC archive domain (not API endpoint)
-            # Format: https://epic.gsfc.nasa.gov/archive/enhanced/2019/05/30/png/epic_RGB_20190530011359.png
-            url = f"https://epic.gsfc.nasa.gov/archive/enhanced/{year}/{month}/{day}/png/{image_name}"
+            # Format: https://epic.gsfc.nasa.gov/archive/natural/2019/05/30/png/epic_RGB_20190530011359.png
+            url = f"https://epic.gsfc.nasa.gov/archive/natural/{year}/{month}/{day}/png/{image_name}"
             
             # Create target directory structure: images/YYYY-MM-DD/
             date_dir = self.images_dir / date

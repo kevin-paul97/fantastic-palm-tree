@@ -13,10 +13,10 @@ class DataConfig:
     raw_data_dir: str = "raw_data"
     images_dir: str = "images"
     combined_dir: str = "combined"
-    download_dir: str = "download"
+    # download_dir: str = "download"  # Deprecated - use images_dir instead
     
     # Image processing
-    image_size: tuple = (64, 64)
+    image_size: int = 64
     grayscale: bool = True
     
     # Data splits
@@ -25,7 +25,7 @@ class DataConfig:
     test_split: float = 0.1
     
     # NASA EPIC API
-    api_base_url: str = "https://epic.gsfc.nasa.gov/api/enhanced"
+    api_base_url: str = "https://epic.gsfc.nasa.gov/api/natural"
 
 
 @dataclass
