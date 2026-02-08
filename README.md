@@ -174,19 +174,502 @@ NASA EPIC API
 └─────────────────┘
 ```
 
-## 🚀 Quick Start
+## 🚀 Complete Command Reference
 
-### 🆕 Simplified Command Interface
+### 📋 Main CLI Interface (`main.py`)
 
-The CLI has been **majorly simplified** with consolidated commands and better organization.
+The satellite image coordinate prediction system provides a **comprehensive command interface** with data processing, training, evaluation, and visualization capabilities.
 
-#### 1. Setup Complete Data Pipeline
+---
+
+#### 🔧 **Setup Commands**
+
+##### 1. Complete Data Pipeline Setup
 ```bash
-# 🆕 New simplified command
+python3 main.py setup [--config config.json] [--device auto|cuda|mps|cpu]
+```
+**Description**: Downloads NASA EPIC metadata, extracts satellite images, creates coordinate statistics, and generates visualizations.
+
+**Outputs Generated**:
+- `raw_data/all.json` - Complete NASA EPIC metadata
+- `images/YYYY-MM-DD/*.png` - Satellite images organized by date
+- `combined/YYYY-MM-DD.json` - Consolidated daily metadata
+- `outputs/coordinate_distribution.png` - Latitude/longitude distribution plots
+- `outputs/coordinate_world_map.png` - World map with coordinate locations
+- `outputs/coordinate_statistics.csv` - Statistical summary of coordinate data
+
+**Example**:
+```bash
+# Complete setup with automatic device detection
 python3 main.py setup
 
-# 📅 Downloads metadata, extracts coordinates, and creates visualizations
+# Custom setup with MPS acceleration
+python3 main.py setup --device mps --config production_config.json
 ```
+
+---
+
+#### 🧠 **Training Commands**
+
+##### 2. Model Training
+```bash
+# Train Location Regressor (predicts coordinates from images)
+python3 main.py train regressor [--epochs 100] [--batch-size 32] [--lr 0.001] [--device auto] [--no-tensorboard]
+
+# Train Autoencoder (learns image representations)
+python3 main.py train autoencoder [--epochs 100] [--batch-size 32] [--lr 0.001] [--device auto]
+```
+
+**Training Parameters**:
+- `--epochs` - Number of training epochs (default: 100)
+- `--batch-size` - Training batch size (default: 32)
+- `--lr` - Learning rate (default: 0.001)
+- `--device` - Training device: auto|cuda|mps|cpu (default: auto)
+- `--no-tensorboard` - Disable automatic TensorBoard launch
+- `--config` - Path to custom configuration file
+
+**Outputs Generated**:
+- `models/regressor_final.pth` - Trained location regressor model
+- `models/autoencoder_final.pth` - Trained autoencoder model
+- `models/best_model.pth` - Best validation performance model
+- `logs/` - Training logs and TensorBoard data
+- Comprehensive TensorBoard logging with hyperparameters and metrics
+
+**Examples**:
+```bash
+# Basic training
+python3 main.py train regressor
+
+# Advanced training with custom settings
+python3 main.py train regressor --epochs 200 --batch-size 64 --lr 0.0005 --device cuda
+
+# Training without TensorBoard (for automated environments)
+python3 main.py train autoencoder --epochs 100 --no-tensorboard
+
+# Training with custom configuration
+python3 main.py train regressor --config experiments/config_a.json
+```
+
+---
+
+#### 📊 **Evaluation Commands**
+
+##### 3. Model Evaluation
+```bash
+python3 main.py evaluate model.pth [--config config.json]
+```
+**Description**: Comprehensive evaluation of trained model with coordinate accuracy metrics.
+
+**Evaluation Metrics**:
+- Mean/Median coordinate error in degrees
+- Haversine distance analysis (geographic accuracy in kilometers)
+- Accuracy benchmarks within 1km, 10km, 100km, 1000km
+- Performance percentiles and distribution analysis
+
+**Outputs**:
+- Console output with comprehensive performance metrics
+- TensorBoard logging of evaluation results
+
+**Example**:
+```bash
+# Evaluate best model
+python3 main.py evaluate models/best_model.pth
+
+# Evaluate with custom configuration
+python3 main.py evaluate models/regressor_final.pth --config eval_config.json
+```
+
+---
+
+#### 📥 **Data Download Commands**
+
+##### 4. Satellite Data Download
+```bash
+# Download recent N days of data
+python3 main.py download recent [num_days]
+
+# Download latest N images
+python3 main.py download latest [num_images]
+
+# Download all available data
+python3 main.py download all
+```
+
+**Download Modes**:
+- `recent` - Download images from last N days (default: 7 days)
+- `latest` - Download N most recent images (default: 100 images)
+- `all` - Download all available satellite images
+
+**Download Parameters**:
+- `num_days` - Number of recent days to download
+- `num_images` - Number of latest images to download
+
+**Outputs**:
+- Metadata downloaded to `combined/` directory
+- Images saved to `images/YYYY-MM-DD/` structure
+- Progress tracking and error handling
+
+**Examples**:
+```bash
+# Download last 3 days of data
+python3 main.py download recent 3
+
+# Download 500 latest images
+python3 main.py download latest 500
+
+# Download all available satellite data
+python3 main.py download all
+```
+
+---
+
+#### 🔧 **Configuration Management**
+
+##### 5. Custom Configuration
+```json
+{
+  "model": {
+    "hidden_dim": 128,
+    "input_channels": 1,
+    "conv_channels": [64, 128, 256],
+    "kernel_size": 3,
+    "pool_size": 4,
+    "activation": "tanh",
+    "output_dim": 2
+  },
+  "data": {
+    "image_size": 64,
+    "grayscale": true,
+    "train_split": 0.8,
+    "val_split": 0.1,
+    "test_split": 0.1,
+    "api_base_url": "https://epic.gsfc.nasa.gov/api/natural"
+  },
+  "training": {
+    "batch_size": 32,
+    "learning_rate": 0.001,
+    "epochs": 100,
+    "device": "auto",
+    "optimizer": "adam",
+    "weight_decay": 1e-5,
+    "loss_function": "mse",
+    "scheduler": "step",
+    "step_size": 20,
+    "gamma": 0.5,
+    "log_dir": "logs",
+    "save_dir": "models",
+    "launch_tensorboard": true,
+    "tensorboard_port": 6006,
+    "open_browser": false,
+    "num_threads": 16
+  }
+}
+```
+
+**Configuration Usage**:
+```bash
+# Save configuration to file
+python3 main.py train regressor --config production_config.json
+
+# Override specific parameters
+python3 main.py train regressor --config base_config.json --epochs 200 --lr 0.0005
+```
+
+---
+
+### 🧪 **Testing & Prediction Scripts**
+
+#### 5. Single Image Prediction Testing
+```bash
+python test_single_prediction.py --model_path models/regressor_final.pth [--config config.json] [--output_dir outputs] [--show]
+```
+**Description**: Test single image prediction with visualization and coordinate accuracy metrics.
+
+**Outputs**:
+- `outputs/single_prediction_test.png` - Side-by-side image and world map visualization
+- Console output with coordinate comparison and error metrics
+
+#### 6. Multiple Image Prediction Testing
+```bash
+python test_multiple_predictions.py --model_path models/regressor_final.pth [--num_samples 6] [--output_dir outputs] [--show]
+```
+**Description**: Test multiple image predictions with statistical analysis and error distribution.
+
+**Outputs**:
+- `outputs/multiple_predictions_test_6.png` - Grid of images with coordinate predictions
+- Console output with average/median/min/max error statistics
+
+---
+
+### 📊 **Individual Utility Functions**
+
+#### 7. Model Creation (`models.py`)
+```python
+from models import create_location_regressor, create_autoencoder
+from config import Config
+
+config = Config()
+
+# Create models with default configuration
+regressor = create_location_regressor(config)
+autoencoder = create_autoencoder(config)
+
+# Create models with custom parameters
+regressor = LocationRegressor(
+    input_channels=1,
+    conv_channels=[64, 128, 256],
+    kernel_size=3,
+    pool_size=4,
+    activation="tanh",
+    hidden_dim=128,
+    output_dim=2
+)
+```
+
+#### 8. Data Processing (`data.py`)
+```python
+from data import EPICDataDownloader, CoordinateExtractor
+from config import Config
+
+config = Config()
+
+# Download NASA EPIC data
+downloader = EPICDataDownloader(config)
+downloader.download_metadata()           # Download metadata
+downloader.download_all_images()        # Download all images
+downloader.download_recent_images(7)   # Download last 7 days
+downloader.download_latest_images(100)  # Download 100 latest images
+
+# Extract coordinate statistics
+extractor = CoordinateExtractor(config)
+lat_coords, lon_coords = extractor.extract_coordinates()
+```
+
+#### 9. Visualization (`visualization.py`)
+```python
+from visualization import (
+    plot_coordinate_distribution,
+    plot_world_map_with_coordinates,
+    plot_training_curves,
+    plot_coordinate_predictions,
+    create_coordinate_statistics_table
+)
+
+# Coordinate distribution plots
+plot_coordinate_distribution(lat_coords, lon_coords, save_path="distribution.png", show_plot=False)
+
+# World map with coordinates
+plot_world_map_with_coordinates(lat_coords, lon_coords, save_path="world_map.png", show_plot=False)
+
+# Training curves
+plot_training_curves(train_losses, val_losses, save_path="training_curves.png", show_plot=False)
+
+# Prediction comparisons
+plot_coordinate_predictions(true_coords, pred_coords, save_path="predictions.png", show_plot=False)
+```
+
+#### 10. Evaluation Reporter (`evaluation_reporter.py`)
+```python
+from evaluation_reporter import EvaluationReporter
+
+# Generate comprehensive evaluation report
+reporter = EvaluationReporter(model_path, config)
+report = reporter.generate_comprehensive_report(
+    predictions, targets, mse_loss, output_dir="outputs"
+)
+
+# Outputs:
+# - evaluation_report_YYYYMMDD_HHMMSS.json (detailed JSON report)
+# - evaluation_report_YYYYMMDD_HHMMSS.md (human-readable markdown)
+# - evaluation_summary_YYYYMMDD_HHMMSS.csv (summary statistics)
+```
+
+#### 11. TensorBoard Utilities (`tensorboard_utils.py`)
+```python
+from tensorboard_utils import start_tensorboard, stop_tensorboard, is_port_available
+
+# Start TensorBoard server
+success = start_tensorboard(log_dir="logs", port=6006, open_browser=False)
+
+# Stop TensorBoard
+stop_tensorboard(port=6006)
+
+# Check port availability
+available = is_port_available(6006)
+```
+
+#### 12. Coordinate Processing (`coordinate_processing.py`)
+```python
+from coordinate_processing import CoordinateProcessor
+
+# Create processor with Earth bounds
+processor = CoordinateProcessor()
+
+# Create processor with custom coordinate range
+processor = CoordinateProcessor({
+    'min_lat': -90, 'max_lat': 90,
+    'min_lon': -180, 'max_lon': 180
+})
+
+# Process coordinates
+normalized = processor.normalize(coordinates)
+denormalized = processor.denormalize(normalized)
+distance = processor.haversine_distance(coord1, coord2)
+metrics = processor.compute_comprehensive_metrics(pred_coords, true_coords)
+```
+
+---
+
+### 🔄 **Complete Workflow Examples**
+
+#### 🏗️ **Research Workflow**
+```bash
+# 1. Setup complete data pipeline
+python3 main.py setup
+
+# 2. Train baseline model
+python3 main.py train regressor --epochs 50 --batch-size 32
+
+# 3. Evaluate model performance
+python3 main.py evaluate models/regressor_final.pth
+
+# 4. Test individual predictions
+python test_single_prediction.py --model_path models/regressor_final.pth
+
+# 5. Test multiple predictions with analysis
+python test_multiple_predictions.py --model_path models/regressor_final.pth --num_samples 10
+```
+
+#### 🚀 **Production Training**
+```bash
+# High-performance training with custom configuration
+python3 main.py train regressor \
+    --config production_config.json \
+    --epochs 200 \
+    --batch-size 64 \
+    --lr 0.0005 \
+    --device cuda
+```
+
+#### 📊 **Experimentation & Analysis**
+```bash
+# Download additional data for training
+python3 main.py download recent 14
+
+# Train with experimental settings
+python3 main.py train regressor \
+    --epochs 300 \
+    --lr 0.0001 \
+    --batch-size 128 \
+    --no-tensorboard
+
+# Generate comprehensive evaluation report
+python main.py evaluate models/regressor_final.pth
+
+# Analyze results in TensorBoard (automatically launched)
+# Access at: http://localhost:6006
+```
+
+---
+
+### 🛠️ **Troubleshooting**
+
+#### Common Issues & Solutions
+
+##### **TensorBoard Issues**
+```bash
+# Check if TensorBoard is running
+lsof -i :6006
+
+# Manually start TensorBoard
+python -m tensorboard.main --logdir logs --port 6006
+
+# Kill existing TensorBoard
+pkill -f tensorboard
+```
+
+##### **GPU Memory Issues**
+```bash
+# Reduce batch size for memory efficiency
+python3 main.py train regressor --batch-size 16 --device cuda
+
+# Use CPU if GPU memory insufficient
+python3 main.py train regressor --device cpu
+```
+
+##### **Download Issues**
+```bash
+# Check API key status
+export NASA_EPIC_API_KEY="your_api_key_here"
+
+# Resume interrupted download
+python3 main.py download recent 7  # Will skip existing files
+```
+
+##### **Model Loading Issues**
+```bash
+# Verify model file exists
+ls -la models/regressor_final.pth
+
+# Check model architecture compatibility
+python test_single_prediction.py --model_path models/regressor_final.pth
+```
+
+---
+
+### 📁 **Output File Structure**
+
+After running commands, expect this structure:
+
+```
+fantastic-palm-tree/
+├── 📊 outputs/                    # Generated plots and reports
+│   ├── coordinate_distribution.png
+│   ├── coordinate_world_map.png
+│   ├── single_prediction_test.png
+│   ├── multiple_predictions_test_6.png
+│   ├── evaluation_report_*.json
+│   ├── evaluation_report_*.md
+│   └── evaluation_summary_*.csv
+├── 📁 models/                    # Trained model checkpoints
+│   ├── regressor_final.pth
+│   ├── autoencoder_final.pth
+│   └── best_model.pth
+├── 📸 images/                    # Downloaded satellite images
+│   ├── 2015-06-17/
+│   │   └── epic_RGB_20150617113959.png
+│   └── 2015-06-27/
+│       └── epic_RGB_20150627110417.png
+├── 📋 combined/                  # Consolidated metadata
+│   ├── 2015-06-17.json
+│   ├── 2015-06-27.json
+│   └── ...
+└── 📈 logs/                     # Training logs and TensorBoard data
+    └── events.out.tfevents.*
+```
+
+---
+
+### 🎯 **Best Practices**
+
+#### For Optimal Performance
+1. **Use GPU acceleration**: `--device cuda` when available
+2. **Batch size tuning**: Start with 32, adjust based on GPU memory
+3. **Learning rate scheduling**: Use default step scheduler or custom LR schedules
+4. **Data validation**: Always run `setup` command before training
+5. **Regular evaluation**: Monitor performance with evaluation commands
+
+#### For Reproducibility
+1. **Fix random seeds**: Set seeds in configuration for reproducible results
+2. **Version control**: Track experiment configurations in git
+3. **Documentation**: Save configuration files for each experiment
+4. **Logging**: Use TensorBoard for comprehensive experiment tracking
+
+#### For Large Scale Training
+1. **Batch processing**: Use larger batch sizes with GPU memory
+2. **Data sharding**: Process data in chunks for very large datasets
+3. **Checkpointing**: Save intermediate models during long training
+4. **Distributed training**: Consider multi-GPU training for very large models
 
 #### 2. Train Models
 ```bash
