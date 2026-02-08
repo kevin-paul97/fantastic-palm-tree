@@ -312,125 +312,21 @@ class UnifiedTrainer:
         
         # Count and log model parameters
         total_params = sum(p.numel() for p in self.model.parameters())
-        trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
-        non_trainable_params = total_params - trainable_params
+        logger.info(f"Starting training for {self.config.training.max_epochs} epochs")
+        logger.info(f"Device: {self.device}")
+        logger.info(f"Model parameters: {total_params}")
         
-        self.writer.add_scalar('model/total_parameters', total_params)
-        self.writer.add_scalar('model/trainable_parameters', trainable_params)
-        self.writer.add_scalar('model/non_trainable_parameters', non_trainable_params)
-        self.writer.add_scalar('model/trainable_ratio', trainable_params / total_params if total_params > 0 else 0)
-        
-        # Log model complexity metrics
-        if hasattr(self.model, 'layers') or hasattr(self.model, 'modules'):
-            total_layers = len(list(self.model.modules()))
-            self.writer.add_scalar('model/total_layers', total_layers)
-        
-        # Create configuration summary text
-        config_summary = f"""
-Model Configuration:
-- Type: {self.model.__class__.__name__}
-- Hidden Dimensions: {self.config.model.hidden_dim}
-- Input Channels: {self.config.model.input_channels}
-- Total Parameters: {total_params:,}
-- Trainable Parameters: {trainable_params:,}
-- Trainable Ratio: {trainable_params/total_params:.2%}
-
-Training Configuration:
-- Learning Rate: {self.config.training.learning_rate}
-- Batch Size: {self.config.training.batch_size}
-- Max Epochs: {self.config.training.max_epochs}
-- Optimizer: {self.config.training.optimizer}
-- Loss Function: {self.config.training.loss_function}
-- Scheduler: {self.config.training.scheduler}
-- Gradient Clipping: {self.config.training.gradient_clipping}
-- Weight Decay: {self.config.training.weight_decay}
-- Device: {self.device}
-- Enhanced Mode: {self.enhanced_mode}
-        """
-        
-        self.writer.add_text('training/configuration_summary', config_summary)
-        self.writer.flush()
-        
-        logger.info("Comprehensive configuration logged to TensorBoard")
-    
-    def train_epoch(self) -> float:
-        """Train the model for one epoch."""
-        self.model.train()
-        total_loss = 0.0
-        num_batches = 0
-        
-        progress_bar = tqdm(self.train_loader, desc=f'Epoch {self.current_epoch+1}')
-        
-        for batch_idx, (images, targets) in enumerate(progress_bar):
-            images = images.to(self.device)
-            targets = targets.to(self.device)
-            
-            # Forward pass
-            self.optimizer.zero_grad()
-            outputs = self.model(images)
-            loss = self.criterion(outputs, targets)
-            
-            # Backward pass
-            loss.backward()
-            
-            # Gradient clipping if enabled
-            if self.config.training.gradient_clipping > 0:
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.training.gradient_clipping)
-            
-            self.optimizer.step()
-            
-            total_loss += loss.item()
-            num_batches += 1
-            
-            # Update progress bar
-            progress_bar.set_postfix({'loss': f'{loss.item():.4f}'})
-            
-            # Log to TensorBoard (enhanced mode only)
-            if self.enhanced_mode and self.writer is not None and batch_idx % 100 == 0:
-                global_step = self.current_epoch * len(self.train_loader) + batch_idx
-                self.writer.add_scalar('train/batch_loss', loss.item(), global_step)
-                self.writer.add_scalar('train/learning_rate', self.optimizer.param_groups[0]['lr'], global_step)
-        
-        avg_loss = total_loss / num_batches
-        self.train_losses.append(avg_loss)
-        
-        # Log epoch loss to TensorBoard
-        if self.writer is not None:
-            self.writer.add_scalar('train/epoch_loss', avg_loss, self.current_epoch)
-        
-        return avg_loss
-    
-    def validate_epoch(self) -> float:
-        """Validate the model for one epoch."""
-        self.model.eval()
-        total_loss = 0.0
-        num_batches = 0
-        
-        with torch.no_grad():
-            for images, targets in tqdm(self.val_loader, desc='Validation'):
-                images = images.to(self.device)
-                targets = targets.to(self.device)
-                
-                outputs = self.model(images)
-                loss = self.criterion(outputs, targets)
-                
-                total_loss += loss.item()
-                num_batches += 1
-        
-        avg_loss = total_loss / num_batches
-        self.val_losses.append(avg_loss)
-        
-        # Log validation loss to TensorBoard
-        if self.writer is not None:
-            self.writer.add_scalar('val/epoch_loss', avg_loss, self.current_epoch)
-        
-        return avg_loss
-    
-    def train(self) -> Dict[str, Any]:
+        for epoch in tqdm(range(self.config.training.max_epochs), desc="Training epochs"):
         """Train the model for the specified number of epochs."""
         logger.info(f"Starting training for {self.config.training.max_epochs} epochs")
         logger.info(f"Device: {self.device}")
         logger.info(f"Model parameters: {sum(p.numel() for p in self.model.parameters()):,}")
+        
+        logger.info(f"Starting training for {self.config.training.max_epochs} epochs")
+        logger.info(f"Device: {self.device}")
+        logger.info(f"Model parameters: {sum(p.numel() for p in self.model.parameters()):,}")
+        
+        from tqdm import tqdm
         
         for epoch in range(self.config.training.max_epochs):
             self.current_epoch = epoch
@@ -457,7 +353,7 @@ Training Configuration:
                 self.best_val_loss = val_loss
                 self.save_checkpoint('best_model.pth')
             
-            # Log epoch results
+            # Log epoch results with progress information
             logger.info(f'Epoch {epoch+1}/{self.config.training.max_epochs}: '
                        f'Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}')
             
@@ -483,6 +379,10 @@ Training Configuration:
         
         # Log final metrics to TensorBoard
         if self.writer is not None:
+            # Initialize variables to avoid unbound errors
+            train_improvement = 0
+            val_improvement = 0
+            epochs_to_best = self.config.training.max_epochs
             # Final hyperparameters summary
             final_hparams = {
                 'model_type': self.model.__class__.__name__,
@@ -490,51 +390,46 @@ Training Configuration:
                 'best_val_loss': self.best_val_loss,
                 'final_train_loss': self.train_losses[-1] if self.train_losses else 0,
                 'final_val_loss': self.val_losses[-1] if self.val_losses else 0,
-                'optimizer': self.config.training.optimizer,
-                'learning_rate': self.config.training.learning_rate,
-                'batch_size': self.config.training.batch_size,
-                'loss_function': self.config.training.loss_function,
-                'scheduler': self.config.training.scheduler,
-                'gradient_clipping': self.config.training.gradient_clipping,
-                'device': str(self.device)
+                'train_improvement_percent': train_improvement,
+                'val_improvement_percent': val_improvement,
+                'epochs_to_best': epochs_to_best
             }
+            
+            # Calculate improvement metrics
+            if len(self.train_losses) > 1:
+                train_improvement = ((self.train_losses[0] - self.train_losses[-1]) / self.train_losses[0]) * 100
+            
+            if len(self.val_losses) > 1:
+                val_improvement = ((self.val_losses[0] - self.best_val_loss) / self.val_losses[0]) * 100
+                epochs_to_best = self.val_losses.index(self.best_val_loss) + 1 if self.best_val_loss in self.val_losses else self.config.training.max_epochs
             
             # Log final hyperparameters
             for key, value in final_hparams.items():
                 self.writer.add_text(f'final/{key}', str(value))
             
-            # Log loss curves summary statistics
+            # Log loss curve statistics
             if self.train_losses:
                 self.writer.add_scalar('final/train_loss_mean', sum(self.train_losses)/len(self.train_losses), self.config.training.max_epochs-1)
-                self.writer.add_scalar('final/train_loss_min', min(self.train_losses), self.config.training.max_epochs-1)
-                self.writer.add_scalar('final/train_loss_max', max(self.train_losses), self.config.training.max_epochs-1)
-                self.writer.add_scalar('final/train_loss_final', self.train_losses[-1], self.config.training.max_epochs-1)
-            
-            if self.val_losses:
-                self.writer.add_scalar('final/val_loss_mean', sum(self.val_losses)/len(self.val_losses), self.config.training.max_epochs-1)
-                self.writer.add_scalar('final/val_loss_min', min(self.val_losses), self.config.training.max_epochs-1)
-                self.writer.add_scalar('final/val_loss_max', max(self.val_losses), self.config.training.max_epochs-1)
-                self.writer.add_scalar('final/val_loss_final', self.val_losses[-1], self.config.training.max_epochs-1)
-            
-            # Log training efficiency metrics
-            train_improvement = 0
-            if len(self.train_losses) > 1:
-                train_improvement = ((self.train_losses[0] - self.train_losses[-1]) / self.train_losses[0]) * 100
+                    self.writer.add_scalar('final/train_loss_min', min(self.train_losses), self.config.training.max_epochs-1)
+                    self.writer.add_scalar('final/train_loss_max', max(self.train_losses), self.config.training.max_epochs-1)
+                    self.writer.add_scalar('final/train_loss_final', self.train_losses[-1], self.config.training.max_epochs-1)
+                
+                if self.val_losses:
+                    self.writer.add_scalar('final/val_loss_mean', sum(self.val_losses)/len(self.val_losses), self.config.training.max_epochs-1)
+                    self.writer.add_scalar('final/val_loss_min', min(self.val_losses), self.config.training.max_epochs-1)
+                    self.writer.add_scalar('final/val_loss_max', max(self.val_losses), self.config.training.max_epochs-1)
+                    self.writer.add_scalar('final/val_loss_final', self.val_losses[-1], self.config.training.max_epochs-1)
+                
+                # Log training efficiency metrics
                 self.writer.add_scalar('final/train_improvement_percent', train_improvement, self.config.training.max_epochs-1)
-            
-            val_improvement = 0
-            if len(self.val_losses) > 1:
-                val_improvement = ((self.val_losses[0] - self.best_val_loss) / self.val_losses[0]) * 100
                 self.writer.add_scalar('final/val_improvement_percent', val_improvement, self.config.training.max_epochs-1)
-            
-            # Log convergence metrics
-            epochs_to_best = self.val_losses.index(self.best_val_loss) + 1 if self.best_val_loss in self.val_losses else self.config.training.max_epochs
-            self.writer.add_scalar('final/epochs_to_best_val', epochs_to_best, self.config.training.max_epochs-1)
-            convergence_rate = epochs_to_best / self.config.training.max_epochs
-            self.writer.add_scalar('final/convergence_rate', convergence_rate, self.config.training.max_epochs-1)
-            
-            # Create summary table
-            summary_text = f"""
+                
+                # Log convergence metrics
+                self.writer.add_scalar('final/epochs_to_best_val', epochs_to_best, self.config.training.max_epochs-1)
+                self.writer.add_scalar('final/convergence_rate', epochs_to_best / self.config.training.max_epochs, self.config.training.max_epochs-1)
+                
+                # Create summary table
+                summary_text = f"""
 Training Summary:
 - Model: {final_hparams['model_type']}
 - Total Epochs: {final_hparams['total_epochs']}
@@ -544,7 +439,7 @@ Training Summary:
 - Train Improvement: {train_improvement:.2f}% (if applicable)
 - Val Improvement: {val_improvement:.2f}% (if applicable)
 - Epochs to Best: {epochs_to_best}
-- Convergence Rate: {convergence_rate:.2f}
+- Convergence Rate: {epochs_to_best / final_hparams['total_epochs']:.2f}
 - Optimizer: {final_hparams['optimizer']}
 - Learning Rate: {final_hparams['learning_rate']}
 - Batch Size: {final_hparams['batch_size']}
@@ -552,18 +447,26 @@ Training Summary:
 - Scheduler: {final_hparams['scheduler']}
 - Device: {final_hparams['device']}
             """
-            
-            self.writer.add_text('final/training_summary', summary_text)
-            
-            # Log model complexity metrics
-            total_params = sum(p.numel() for p in self.model.parameters())
-            trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
-            self.writer.add_scalar('final/total_parameters', total_params, self.config.training.max_epochs-1)
-            self.writer.add_scalar('final/trainable_parameters', trainable_params, self.config.training.max_epochs-1)
-            
-            # Ensure all data is written to TensorBoard
-            self.writer.flush()
-            logger.info("Final training metrics logged to TensorBoard")
+                
+                self.writer.add_text('final/training_summary', summary_text)
+                
+                # Log model complexity metrics
+                total_params = sum(p.numel() for p in self.model.parameters())
+                trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+                non_trainable_params = total_params - trainable_params
+                self.writer.add_scalar('final/total_parameters', total_params, self.config.training.max_epochs-1)
+                self.writer.add_scalar('final/trainable_parameters', trainable_params, self.config.training.max_epochs-1)
+                self.writer.add_scalar('final/non_trainable_parameters', non_trainable_params, self.config.training.max_epochs-1)
+                self.writer.add_scalar('final/trainable_ratio', trainable_params / total_params if total_params > 0 else 0, self.config.training.max_epochs-1)
+                
+                # Log model complexity metrics
+                if hasattr(self.model, 'layers') or hasattr(self.model, 'modules'):
+                    total_layers = len(list(self.model.modules()))
+                    self.writer.add_scalar('final/total_layers', total_layers, self.config.training.max_epochs-1)
+                
+                # Ensure all data is written to TensorBoard
+                self.writer.flush()
+                logger.info("Final training metrics logged to TensorBoard")
         
         return {
             'train_losses': self.train_losses,
@@ -670,7 +573,7 @@ class LocationRegressorTrainer(UnifiedTrainer):
         all_targets = []
         
         with torch.no_grad():
-            for images, targets in test_loader:
+            for images, targets in tqdm(test_loader, desc="Evaluating coordinates"):
                 images = images.to(self.device)
                 targets = targets.to(self.device)
                 
@@ -678,24 +581,24 @@ class LocationRegressorTrainer(UnifiedTrainer):
                 
                 all_predictions.append(predictions.cpu())
                 all_targets.append(targets.cpu())
+            
+            all_predictions = torch.cat(all_predictions, dim=0)
+            all_targets = torch.cat(all_targets, dim=0)
         
-        all_predictions = torch.cat(all_predictions, dim=0)
-        all_targets = torch.cat(all_targets, dim=0)
-        
-        # Calculate coordinate errors
-        coord_errors = self.coord_normalizer.compute_coordinate_error_degrees(
-            all_predictions, all_targets
-        )
-        haversine_distances = self.coord_normalizer.compute_haversine_distance(
-            all_predictions, all_targets
-        )
-        
-        return {
-            'mean_coordinate_error_deg': coord_errors.mean().item(),
-            'median_coordinate_error_deg': coord_errors.median().item(),
-            'mean_haversine_km': haversine_distances.mean().item(),
-            'median_haversine_km': haversine_distances.median().item()
-        }
+            # Calculate coordinate errors
+            coord_errors = self.coord_normalizer.compute_coordinate_error_degrees(
+                all_predictions, all_targets
+            )
+            haversine_distances = self.coord_normalizer.compute_haversine_distance(
+                all_predictions, all_targets
+            )
+            
+            return {
+                'mean_coordinate_error_deg': coord_errors.mean().item(),
+                'median_coordinate_error_deg': coord_errors.median().item(),
+                'mean_haversine_km': haversine_distances.mean().item(),
+                'median_haversine_km': haversine_distances.median().item()
+            }
 
 
 class AutoEncoderTrainer(UnifiedTrainer):
