@@ -55,15 +55,24 @@ def setup_data_pipeline(config):
     
     # Create coordinate statistics
     extractor = CoordinateExtractor(config)
-    stats = extractor.coordinate_statistics
-    logger.info(f"Coordinate range: Lat [{stats['min_lat']:.3f}, {stats['max_lat']:.3f}], "
-                f"Lon [{stats['min_lon']:.3f}, {stats['max_lon']:.3f}]")
+    lat_coords, lon_coords = extractor.extract_coordinates()
     
-    # Create visualizations
-    logger.info("Creating coordinate distribution plots...")
-    plot_coordinate_distribution(stats)
-    plot_world_map_with_coordinates(stats)
-    create_coordinate_statistics_table(stats)
+    if lat_coords and lon_coords:
+        logger.info(f"Coordinate range: Lat [{min(lat_coords):.3f}, {max(lat_coords):.3f}], "
+                    f"Lon [{min(lon_coords):.3f}, {max(lon_coords):.3f}]")
+        
+        # Create visualizations
+        logger.info("Creating coordinate distribution plots...")
+        plot_coordinate_distribution(lat_coords, lon_coords, save_path="outputs/coordinate_distribution.png")
+        plot_world_map_with_coordinates(lat_coords, lon_coords, save_path="outputs/coordinate_world_map.png")
+        stats_table = create_coordinate_statistics_table(lat_coords, lon_coords)
+        
+        # Save statistics table
+        import pandas as pd
+        stats_table.to_csv("outputs/coordinate_statistics.csv", index=False)
+        logger.info(f"Coordinate statistics saved to outputs/coordinate_statistics.csv")
+    else:
+        logger.warning("No coordinates found for visualization")
 
 
 def train_model(config, model_type: str = "regressor"):
@@ -119,9 +128,12 @@ def evaluate_model_performance(config, model_path: str):
     
     _, _, test_loader = create_dataloaders(config)
     
-    # Create trainer for evaluation
-    _, _, test_loader = create_dataloaders(config)
-    trainer = LocationRegressorTrainer(model, None, test_loader, config)
+    # Create trainer for evaluation with dummy train loader
+    from torch.utils.data import DataLoader, TensorDataset
+    dummy_train_data = TensorDataset(torch.zeros(1, 1, 64, 64), torch.zeros(1, 2))
+    dummy_train_loader = DataLoader(dummy_train_data, batch_size=1)
+    
+    trainer = LocationRegressorTrainer(model, dummy_train_loader, test_loader, config)
     
     # Evaluate with coordinate metrics
     metrics = trainer.evaluate_coordinates(test_loader)
@@ -144,7 +156,7 @@ def download_data(config, mode: str = "recent", num_days: int = 7, num_images: i
     if mode == "recent":
         # Download recent days
         logger.info(f"Downloading images from last {num_days} days...")
-        downloader.download_recent_days(num_days)
+        downloader.download_recent_images(num_days)
         
     elif mode == "latest":
         # Download latest images
