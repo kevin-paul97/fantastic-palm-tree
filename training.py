@@ -106,26 +106,30 @@ class UnifiedTrainer:
                     raise PermissionError(f"Cannot write to log directory {self.config.training.log_dir}: {e}")
                 
                 # Create writer with enhanced settings
-                writer_kwargs = {
-                    'log_dir': self.config.training.log_dir,
-                    'comment': f'_device_{self.config.training.device}_batch_{self.config.training.batch_size}',
-                    'flush_secs': 10  # Auto-flush every 10 seconds
-                }
+                if SummaryWriter is not None:
+                    self.writer = SummaryWriter(
+                        log_dir=self.config.training.log_dir,
+                        comment=f'_device_{self.config.training.device}_batch_{self.config.training.batch_size}',
+                        flush_secs=10  # Auto-flush every 10 seconds
+                    )
+                    
+                    # Test writer functionality
+                    if self.writer is not None:
+                        self.writer.add_scalar('test/init', 1.0, 0)
+                        self.writer.flush()
+                        self.writer.add_scalar('test/init', 2.0, 1)
+                        self.writer.flush()
+                else:
+                    self.writer = None
             else:
                 # Basic setup
-                writer_kwargs = {
-                    'log_dir': self.config.training.log_dir,
-                    'comment': f'_device_{self.config.training.device}_batch_{self.config.training.batch_size}'
-                }
-            
-            self.writer = SummaryWriter(**writer_kwargs)
-            
-            # Test writer functionality if in enhanced mode
-            if self.enhanced_mode and self.writer is not None:
-                self.writer.add_scalar('test/init', 1.0, 0)
-                self.writer.flush()
-                self.writer.add_scalar('test/init', 2.0, 1)
-                self.writer.flush()
+                if SummaryWriter is not None:
+                    self.writer = SummaryWriter(
+                        log_dir=self.config.training.log_dir,
+                        comment=f'_device_{self.config.training.device}_batch_{self.config.training.batch_size}'
+                    )
+                else:
+                    self.writer = None
             
             # Log configuration
             self._log_config_to_tensorboard()
@@ -262,33 +266,92 @@ class UnifiedTrainer:
         if self.writer is None:
             return
             
-        config_dict = {
+        # Model configuration
+        model_config = {
             'model/hidden_dim': self.config.model.hidden_dim,
             'model/input_channels': self.config.model.input_channels,
+            'model/type': self.model.__class__.__name__,
+        }
+        
+        # Training configuration
+        training_config = {
             'training/learning_rate': self.config.training.learning_rate,
             'training/batch_size': self.config.training.batch_size,
             'training/max_epochs': self.config.training.max_epochs,
             'training/optimizer': self.config.training.optimizer,
             'training/loss_function': self.config.training.loss_function,
             'training/scheduler': self.config.training.scheduler,
-            'training/device': self.config.training.device,
+            'training/gradient_clipping': self.config.training.gradient_clipping,
+            'training/weight_decay': self.config.training.weight_decay,
+            'training/step_size': getattr(self.config.training, 'step_size', 20),
+            'training/gamma': getattr(self.config.training, 'gamma', 0.5),
+            'training/device': str(self.device),
+            'training/enhanced_mode': str(self.enhanced_mode),
         }
         
-        for key, value in config_dict.items():
-            self.writer.add_text(key, str(value), 0)
+        # Data configuration (if available)
+        data_config = {}
+        try:
+            if hasattr(self.config, 'data') and self.config.data:
+                data_config = {
+                    'data/image_size': getattr(self.config.data, 'image_size', 64),
+                    'data/train_split': getattr(self.config.data, 'train_split', 0.8),
+                    'data/val_split': getattr(self.config.data, 'val_split', 0.1),
+                    'data/test_split': getattr(self.config.data, 'test_split', 0.1),
+                }
+        except:
+            pass
         
-        # Log model architecture
+        # Log all configurations
+        all_configs = {**model_config, **training_config, **data_config}
+        for key, value in all_configs.items():
+            self.writer.add_text(key, str(value))
+        
+        # Log model architecture summary
         self.writer.add_text('model/architecture', str(self.model))
         
-        # Count model parameters
+        # Count and log model parameters
         total_params = sum(p.numel() for p in self.model.parameters())
         trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        non_trainable_params = total_params - trainable_params
+        
         self.writer.add_scalar('model/total_parameters', total_params)
         self.writer.add_scalar('model/trainable_parameters', trainable_params)
+        self.writer.add_scalar('model/non_trainable_parameters', non_trainable_params)
+        self.writer.add_scalar('model/trainable_ratio', trainable_params / total_params if total_params > 0 else 0)
         
+        # Log model complexity metrics
+        if hasattr(self.model, 'layers') or hasattr(self.model, 'modules'):
+            total_layers = len(list(self.model.modules()))
+            self.writer.add_scalar('model/total_layers', total_layers)
+        
+        # Create configuration summary text
+        config_summary = f"""
+Model Configuration:
+- Type: {self.model.__class__.__name__}
+- Hidden Dimensions: {self.config.model.hidden_dim}
+- Input Channels: {self.config.model.input_channels}
+- Total Parameters: {total_params:,}
+- Trainable Parameters: {trainable_params:,}
+- Trainable Ratio: {trainable_params/total_params:.2%}
+
+Training Configuration:
+- Learning Rate: {self.config.training.learning_rate}
+- Batch Size: {self.config.training.batch_size}
+- Max Epochs: {self.config.training.max_epochs}
+- Optimizer: {self.config.training.optimizer}
+- Loss Function: {self.config.training.loss_function}
+- Scheduler: {self.config.training.scheduler}
+- Gradient Clipping: {self.config.training.gradient_clipping}
+- Weight Decay: {self.config.training.weight_decay}
+- Device: {self.device}
+- Enhanced Mode: {self.enhanced_mode}
+        """
+        
+        self.writer.add_text('training/configuration_summary', config_summary)
         self.writer.flush()
         
-        logger.info("Configuration logged to TensorBoard")
+        logger.info("Comprehensive configuration logged to TensorBoard")
     
     def train_epoch(self) -> float:
         """Train the model for one epoch."""
@@ -412,10 +475,110 @@ class UnifiedTrainer:
                 self.writer.add_scalar('train/gradient_norm', total_norm, epoch)
         
         logger.info('Training completed!')
+        
+        # Initialize variables to avoid unbound errors
+        train_improvement = 0
+        val_improvement = 0
+        epochs_to_best = self.config.training.max_epochs
+        
+        # Log final metrics to TensorBoard
+        if self.writer is not None:
+            # Final hyperparameters summary
+            final_hparams = {
+                'model_type': self.model.__class__.__name__,
+                'total_epochs': self.config.training.max_epochs,
+                'best_val_loss': self.best_val_loss,
+                'final_train_loss': self.train_losses[-1] if self.train_losses else 0,
+                'final_val_loss': self.val_losses[-1] if self.val_losses else 0,
+                'optimizer': self.config.training.optimizer,
+                'learning_rate': self.config.training.learning_rate,
+                'batch_size': self.config.training.batch_size,
+                'loss_function': self.config.training.loss_function,
+                'scheduler': self.config.training.scheduler,
+                'gradient_clipping': self.config.training.gradient_clipping,
+                'device': str(self.device)
+            }
+            
+            # Log final hyperparameters
+            for key, value in final_hparams.items():
+                self.writer.add_text(f'final/{key}', str(value))
+            
+            # Log loss curves summary statistics
+            if self.train_losses:
+                self.writer.add_scalar('final/train_loss_mean', sum(self.train_losses)/len(self.train_losses), self.config.training.max_epochs-1)
+                self.writer.add_scalar('final/train_loss_min', min(self.train_losses), self.config.training.max_epochs-1)
+                self.writer.add_scalar('final/train_loss_max', max(self.train_losses), self.config.training.max_epochs-1)
+                self.writer.add_scalar('final/train_loss_final', self.train_losses[-1], self.config.training.max_epochs-1)
+            
+            if self.val_losses:
+                self.writer.add_scalar('final/val_loss_mean', sum(self.val_losses)/len(self.val_losses), self.config.training.max_epochs-1)
+                self.writer.add_scalar('final/val_loss_min', min(self.val_losses), self.config.training.max_epochs-1)
+                self.writer.add_scalar('final/val_loss_max', max(self.val_losses), self.config.training.max_epochs-1)
+                self.writer.add_scalar('final/val_loss_final', self.val_losses[-1], self.config.training.max_epochs-1)
+            
+            # Log training efficiency metrics
+            train_improvement = 0
+            if len(self.train_losses) > 1:
+                train_improvement = ((self.train_losses[0] - self.train_losses[-1]) / self.train_losses[0]) * 100
+                self.writer.add_scalar('final/train_improvement_percent', train_improvement, self.config.training.max_epochs-1)
+            
+            val_improvement = 0
+            if len(self.val_losses) > 1:
+                val_improvement = ((self.val_losses[0] - self.best_val_loss) / self.val_losses[0]) * 100
+                self.writer.add_scalar('final/val_improvement_percent', val_improvement, self.config.training.max_epochs-1)
+            
+            # Log convergence metrics
+            epochs_to_best = self.val_losses.index(self.best_val_loss) + 1 if self.best_val_loss in self.val_losses else self.config.training.max_epochs
+            self.writer.add_scalar('final/epochs_to_best_val', epochs_to_best, self.config.training.max_epochs-1)
+            convergence_rate = epochs_to_best / self.config.training.max_epochs
+            self.writer.add_scalar('final/convergence_rate', convergence_rate, self.config.training.max_epochs-1)
+            
+            # Create summary table
+            summary_text = f"""
+Training Summary:
+- Model: {final_hparams['model_type']}
+- Total Epochs: {final_hparams['total_epochs']}
+- Best Val Loss: {final_hparams['best_val_loss']:.6f}
+- Final Train Loss: {final_hparams['final_train_loss']:.6f}
+- Final Val Loss: {final_hparams['final_val_loss']:.6f}
+- Train Improvement: {train_improvement:.2f}% (if applicable)
+- Val Improvement: {val_improvement:.2f}% (if applicable)
+- Epochs to Best: {epochs_to_best}
+- Convergence Rate: {convergence_rate:.2f}
+- Optimizer: {final_hparams['optimizer']}
+- Learning Rate: {final_hparams['learning_rate']}
+- Batch Size: {final_hparams['batch_size']}
+- Loss Function: {final_hparams['loss_function']}
+- Scheduler: {final_hparams['scheduler']}
+- Device: {final_hparams['device']}
+            """
+            
+            self.writer.add_text('final/training_summary', summary_text)
+            
+            # Log model complexity metrics
+            total_params = sum(p.numel() for p in self.model.parameters())
+            trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+            self.writer.add_scalar('final/total_parameters', total_params, self.config.training.max_epochs-1)
+            self.writer.add_scalar('final/trainable_parameters', trainable_params, self.config.training.max_epochs-1)
+            
+            # Ensure all data is written to TensorBoard
+            self.writer.flush()
+            logger.info("Final training metrics logged to TensorBoard")
+        
         return {
             'train_losses': self.train_losses,
             'val_losses': self.val_losses,
-            'best_val_loss': self.best_val_loss
+            'best_val_loss': self.best_val_loss,
+            'final_hyperparameters': {
+                'model_type': self.model.__class__.__name__,
+                'total_epochs': self.config.training.max_epochs,
+                'best_val_loss': self.best_val_loss,
+                'final_train_loss': self.train_losses[-1] if self.train_losses else 0,
+                'final_val_loss': self.val_losses[-1] if self.val_losses else 0,
+                'train_improvement_percent': train_improvement,
+                'val_improvement_percent': val_improvement,
+                'epochs_to_best': epochs_to_best
+            }
         }
     
     def save_checkpoint(self, filename: str):
