@@ -55,6 +55,12 @@ class TrainingConfig:
     # Optimization
     optimizer: str = "adam"
     weight_decay: float = 1e-5
+    loss_function: str = "mse"
+    scheduler: str = "step"
+    step_size: int = 20
+    gamma: float = 0.5
+    max_epochs: int = 100
+    gradient_clipping: float = 0.0
     
     # Logging
     log_dir: str = "logs"
@@ -63,6 +69,7 @@ class TrainingConfig:
     # TensorBoard
     launch_tensorboard: bool = True
     tensorboard_port: int = 6006
+    open_browser: bool = False
     
     # Hardware
     num_threads: int = 16

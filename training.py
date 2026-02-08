@@ -1,30 +1,35 @@
 """
-Training utilities for satellite image coordinate prediction models.
+Unified training utilities combining basic and enhanced functionality.
 """
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import subprocess
+import os
+import logging
+import signal
+import time
+from pathlib import Path
+from typing import Optional, Tuple, Dict, Any
+from tqdm import tqdm
+
 try:
     from torch.utils.tensorboard.writer import SummaryWriter
 except ImportError:
     SummaryWriter = None
+
 from torch.utils.data import DataLoader
-import os
-import logging
-from pathlib import Path
-from typing import Optional, Tuple, Dict, Any
-import time
-from tqdm import tqdm
 
 from models import LocationRegressor, AutoEncoder
 from datasets import CoordinateNormalizer
+from tensorboard_utils import is_port_available, start_tensorboard
 
 logger = logging.getLogger(__name__)
 
 
-class Trainer:
-    """Base trainer class for neural network models."""
+class UnifiedTrainer:
+    """Unified trainer class with configurable enhancement levels."""
     
     def __init__(
         self,
@@ -32,13 +37,15 @@ class Trainer:
         train_loader: DataLoader,
         val_loader: DataLoader,
         config,
-        device: Optional[str] = None
+        device: Optional[str] = None,
+        enhanced_mode: bool = True
     ):
         self.model = model
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.config = config
         self.device = device or torch.device(config.training.device)
+        self.enhanced_mode = enhanced_mode
         
         # Move model to device
         self.model.to(self.device)
@@ -52,27 +59,25 @@ class Trainer:
         # Setup learning rate scheduler
         self.scheduler = self._setup_scheduler()
         
-        # Ensure log directory exists
-        import os
-        os.makedirs(config.training.log_dir, exist_ok=True)
+        # Setup coordinate normalizer
+        self._setup_coordinate_normalizer()
         
-        # Setup tensorboard writer
+        # Training state
+        self.current_epoch = 0
+        self.best_val_loss = float('inf')
+        self.train_losses = []
+        self.val_losses = []
+        
+        # TensorBoard setup
+        self.tensorboard_process = None
+        self.writer = None
         if SummaryWriter is not None:
-            self.writer = SummaryWriter(
-                log_dir=config.training.log_dir,
-                comment=f'_device_{config.training.device}_batch_{config.training.batch_size}'
-            )
-            
-            # Log configuration
-            self._log_config_to_tensorboard()
-            
-            # Launch tensorboard automatically if enabled
-            if config.training.launch_tensorboard:
-                self._launch_tensorboard(config.training.log_dir)
+            self._setup_tensorboard()
         else:
-            self.writer = None
-        
-        # Setup coordinate normalizer with dataset-specific ranges
+            logger.warning("TensorBoard not available")
+    
+    def _setup_coordinate_normalizer(self):
+        """Setup coordinate normalizer from training data."""
         # Get coordinate ranges from training data
         all_coords = []
         for images, coords in self.train_loader:
@@ -83,522 +88,483 @@ class Trainer:
             self.coord_normalizer = CoordinateNormalizer(all_coords_tensor)
         else:
             self.coord_normalizer = CoordinateNormalizer()
-        
-        # Training state
-        self.current_epoch = 0
-        self.best_val_loss = float('inf')
-        self.train_losses = []
-        self.val_losses = []
-        
-        # Tensorboard process tracking
-        self.tensorboard_process = None
     
-    def _launch_tensorboard(self, log_dir: str) -> None:
-        """Launch TensorBoard server for training visualization."""
+    def _setup_tensorboard(self):
+        """Setup TensorBoard writer with configurable error handling."""
         try:
-            import subprocess
-            import webbrowser
-            import time
-            import os
+            # Ensure log directory exists and is writable
+            os.makedirs(self.config.training.log_dir, exist_ok=True)
             
-            # Check if tensorboard is already running on this port
-            tensorboard_port = 6006
-            try:
-                # Check if port is in use
-                import socket
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                result = sock.connect_ex(('localhost', tensorboard_port))
-                sock.close()
+            if self.enhanced_mode:
+                # Enhanced error checking
+                test_file = os.path.join(self.config.training.log_dir, 'test_write')
+                try:
+                    with open(test_file, 'w') as f:
+                        f.write('test')
+                    os.remove(test_file)
+                except Exception as e:
+                    raise PermissionError(f"Cannot write to log directory {self.config.training.log_dir}: {e}")
                 
-                if result == 0:
-                    logger.info(f"TensorBoard already running on http://localhost:{tensorboard_port}")
-                    webbrowser.open(f"http://localhost:{tensorboard_port}")
-                    return
-            except Exception:
-                pass
+                # Create writer with enhanced settings
+                writer_kwargs = {
+                    'log_dir': self.config.training.log_dir,
+                    'comment': f'_device_{self.config.training.device}_batch_{self.config.training.batch_size}',
+                    'flush_secs': 10  # Auto-flush every 10 seconds
+                }
+            else:
+                # Basic setup
+                writer_kwargs = {
+                    'log_dir': self.config.training.log_dir,
+                    'comment': f'_device_{self.config.training.device}_batch_{self.config.training.batch_size}'
+                }
             
-            # Launch tensorboard
-            cmd = [
-                'tensorboard', 
-                '--logdir', log_dir,
-                '--port', str(tensorboard_port),
-                '--host', 'localhost'
-            ]
+            self.writer = SummaryWriter(**writer_kwargs)
             
-            # Start tensorboard process
-            self.tensorboard_process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True
-            )
+            # Test writer functionality if in enhanced mode
+            if self.enhanced_mode and self.writer is not None:
+                self.writer.add_scalar('test/init', 1.0, 0)
+                self.writer.flush()
+                self.writer.add_scalar('test/init', 2.0, 1)
+                self.writer.flush()
             
-            # Wait a moment for tensorboard to start
-            time.sleep(3)
+            # Log configuration
+            self._log_config_to_tensorboard()
             
-            # Open browser
-            webbrowser.open(f"http://localhost:{tensorboard_port}")
-            logger.info("TensorBoard opened in browser")
+            # Launch tensorboard automatically if enabled
+            if self.config.training.launch_tensorboard:
+                self._launch_tensorboard()
+                
+            logger.info("TensorBoard writer initialized successfully")
             
-        except ImportError:
-            logger.warning("TensorBoard not available. Install with: pip install tensorboard")
         except Exception as e:
-            logger.warning(f"Failed to launch TensorBoard: {e}")
+            logger.error(f"Failed to initialize TensorBoard writer: {e}")
+            self.writer = None
     
-    def stop_tensorboard(self) -> None:
-        """Stop TensorBoard process if running."""
-        if self.tensorboard_process:
-            try:
-                self.tensorboard_process.terminate()
-                self.tensorboard_process.wait(timeout=5)
-                logger.info("TensorBoard stopped")
-            except Exception as e:
-                logger.warning(f"Error stopping TensorBoard: {e}")
-            finally:
-                self.tensorboard_process = None
+    def _launch_tensorboard(self):
+        """Launch TensorBoard server with enhanced error handling."""
+        try:
+            if self.enhanced_mode:
+                # Enhanced launch with multiple fallback methods
+                success = start_tensorboard(self.config.training.log_dir, 6006, open_browser=False)
+                if success:
+                    # Store the process info (simplified version)
+                    self.tensorboard_process = True
+                else:
+                    self.tensorboard_process = None
+            else:
+                # Basic launch
+                import subprocess
+                import webbrowser
+                import sys
+                
+                # Check if port is available
+                if not is_port_available(6006):
+                    logger.warning("Port 6006 is in use, TensorBoard may not start properly")
+                
+                # Launch TensorBoard using python -m tensorboard.main (more reliable)
+                cmd = [sys.executable, "-m", "tensorboard.main", 
+                       "--logdir", self.config.training.log_dir,
+                       "--port", "6006",
+                       "--host", "localhost"]
+                
+                self.tensorboard_process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True
+                )
+                
+                # Wait a moment to check if it started successfully
+                time.sleep(2)
+                if self.tensorboard_process.poll() is not None:
+                    stdout, stderr = self.tensorboard_process.communicate()
+                    logger.error(f"TensorBoard failed to start: {stderr}")
+                    self.tensorboard_process = None
+                else:
+                    logger.info(f"TensorBoard launched on http://localhost:6006")
+                    
+                # Auto-open browser if enabled (handle missing config gracefully)
+                if hasattr(self.config.training, 'open_browser') and self.config.training.open_browser:
+                    webbrowser.open('http://localhost:6006')
+                        
+        except Exception as e:
+            logger.error(f"Failed to launch TensorBoard: {e}")
+            self.tensorboard_process = None
     
-    def _log_config_to_tensorboard(self) -> None:
+    def _setup_optimizer(self):
+        """Setup optimizer based on configuration."""
+        optimizer_type = self.config.training.optimizer.lower()
+        
+        if optimizer_type == 'adam':
+            return optim.Adam(
+                self.model.parameters(),
+                lr=self.config.training.learning_rate,
+                weight_decay=self.config.training.weight_decay
+            )
+        elif optimizer_type == 'sgd':
+            return optim.SGD(
+                self.model.parameters(),
+                lr=self.config.training.learning_rate,
+                momentum=0.9,
+                weight_decay=self.config.training.weight_decay
+            )
+        elif optimizer_type == 'adamw':
+            return optim.AdamW(
+                self.model.parameters(),
+                lr=self.config.training.learning_rate,
+                weight_decay=self.config.training.weight_decay
+            )
+        else:
+            raise ValueError(f"Unknown optimizer type: {optimizer_type}")
+    
+    def _setup_criterion(self):
+        """Setup loss function based on configuration."""
+        criterion_type = self.config.training.loss_function.lower()
+        
+        if criterion_type == 'mse':
+            return nn.MSELoss()
+        elif criterion_type == 'l1':
+            return nn.L1Loss()
+        elif criterion_type == 'smooth_l1':
+            return nn.SmoothL1Loss()
+        else:
+            raise ValueError(f"Unknown loss function: {criterion_type}")
+    
+    def _setup_scheduler(self):
+        """Setup learning rate scheduler based on configuration."""
+        scheduler_type = self.config.training.scheduler.lower()
+        
+        if scheduler_type == 'step':
+            return optim.lr_scheduler.StepLR(
+                self.optimizer,
+                step_size=self.config.training.step_size,
+                gamma=self.config.training.gamma
+            )
+        elif scheduler_type == 'cosine':
+            return optim.lr_scheduler.CosineAnnealingLR(
+                self.optimizer,
+                T_max=self.config.training.max_epochs
+            )
+        elif scheduler_type == 'plateau':
+            return optim.lr_scheduler.ReduceLROnPlateau(
+                self.optimizer,
+                mode='min',
+                factor=self.config.training.gamma,
+                patience=self.config.training.step_size
+            )
+        elif scheduler_type == 'none':
+            return None
+        else:
+            raise ValueError(f"Unknown scheduler type: {scheduler_type}")
+    
+    def _log_config_to_tensorboard(self):
         """Log training configuration to TensorBoard."""
         if self.writer is None:
             return
-        
-        import json
-        
-        # Log hyperparameters
+            
         config_dict = {
-            'data': {
-                'image_size': self.config.data.image_size,
-                'grayscale': self.config.data.grayscale,
-                'train_split': self.config.data.train_split,
-                'val_split': self.config.data.val_split,
-                'test_split': self.config.data.test_split
-            },
-            'model': {
-                'input_channels': self.config.model.input_channels,
-                'conv_channels': self.config.model.conv_channels,
-                'kernel_size': self.config.model.kernel_size,
-                'pool_size': self.config.model.pool_size,
-                'activation': self.config.model.activation,
-                'hidden_dim': self.config.model.hidden_dim,
-                'output_dim': self.config.model.output_dim
-            },
-            'training': {
-                'batch_size': self.config.training.batch_size,
-                'learning_rate': self.config.training.learning_rate,
-                'optimizer': self.config.training.optimizer,
-                'weight_decay': self.config.training.weight_decay,
-                'device': self.config.training.device,
-                'num_threads': self.config.training.num_threads
-            }
+            'model/hidden_dim': self.config.model.hidden_dim,
+            'model/input_channels': self.config.model.input_channels,
+            'training/learning_rate': self.config.training.learning_rate,
+            'training/batch_size': self.config.training.batch_size,
+            'training/max_epochs': self.config.training.max_epochs,
+            'training/optimizer': self.config.training.optimizer,
+            'training/loss_function': self.config.training.loss_function,
+            'training/scheduler': self.config.training.scheduler,
+            'training/device': self.config.training.device,
         }
         
-        # Log as text for easy reading
-        config_text = json.dumps(config_dict, indent=2)
-        self.writer.add_text('Config/Training_Configuration', config_text, 0)
+        for key, value in config_dict.items():
+            self.writer.add_text(key, str(value), 0)
         
-        # Log individual hyperparameters
-        hparams = {
-            'batch_size': self.config.training.batch_size,
-            'learning_rate': self.config.training.learning_rate,
-            'optimizer': self.config.training.optimizer,
-            'image_size': self.config.data.image_size,
-            'grayscale': self.config.data.grayscale,
-            'device': self.config.training.device
-        }
+        # Log model architecture
+        self.writer.add_text('model/architecture', str(self.model))
         
-        # Log model architecture info
+        # Count model parameters
         total_params = sum(p.numel() for p in self.model.parameters())
         trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        self.writer.add_scalar('model/total_parameters', total_params)
+        self.writer.add_scalar('model/trainable_parameters', trainable_params)
         
-        model_info = {
-            'total_parameters': total_params,
-            'trainable_parameters': trainable_params,
-            'model_type': self.model.__class__.__name__
-        }
-        
-        # Combine all hyperparameters
-        all_hparams = {**hparams, **model_info}
-        
-        # Write hyperparameters to TensorBoard
-        self.writer.add_hparams(all_hparams, {'metric/placeholder': 0})
+        self.writer.flush()
         
         logger.info("Configuration logged to TensorBoard")
-        
-    def _setup_optimizer(self) -> optim.Optimizer:
-        """Setup optimizer based on configuration."""
-        optimizer_name = self.config.training.optimizer.lower()
-        lr = self.config.training.learning_rate
-        weight_decay = self.config.training.weight_decay
-        
-        if optimizer_name == "adam":
-            return optim.Adam(self.model.parameters(), lr=lr, weight_decay=weight_decay)
-        elif optimizer_name == "sgd":
-            return optim.SGD(self.model.parameters(), lr=lr, weight_decay=weight_decay, momentum=0.9)
-        elif optimizer_name == "adamw":
-            return optim.AdamW(self.model.parameters(), lr=lr, weight_decay=weight_decay)
-        else:
-            raise ValueError(f"Unknown optimizer: {optimizer_name}")
-    
-    def _setup_criterion(self) -> nn.Module:
-        """Setup loss function."""
-        return nn.MSELoss()
-    
-    def _setup_scheduler(self) -> Optional[optim.lr_scheduler.ReduceLROnPlateau]:
-        """Setup learning rate scheduler."""
-        return optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer, mode='min', factor=0.5, patience=10
-        )
     
     def train_epoch(self) -> float:
-        """Train for one epoch."""
+        """Train the model for one epoch."""
         self.model.train()
         total_loss = 0.0
+        num_batches = 0
         
-        pbar = tqdm(self.train_loader, desc=f"Epoch {self.current_epoch + 1}")
+        progress_bar = tqdm(self.train_loader, desc=f'Epoch {self.current_epoch+1}')
         
-        for batch_idx, (images, coords) in enumerate(pbar):
+        for batch_idx, (images, targets) in enumerate(progress_bar):
             images = images.to(self.device)
-            coords = coords.to(self.device)
-            
-            # Normalize coordinates
-            coords_norm = self.coord_normalizer.normalize(coords)
+            targets = targets.to(self.device)
             
             # Forward pass
             self.optimizer.zero_grad()
             outputs = self.model(images)
-            
-            # Apply sigmoid constraint for normalized coordinates
-            outputs_constrained = torch.sigmoid(outputs)
-            loss = self.criterion(outputs_constrained, coords_norm)
+            loss = self.criterion(outputs, targets)
             
             # Backward pass
             loss.backward()
+            
+            # Gradient clipping if enabled
+            if self.config.training.gradient_clipping > 0:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.training.gradient_clipping)
+            
             self.optimizer.step()
             
             total_loss += loss.item()
-            pbar.set_postfix({'loss': loss.item()})
+            num_batches += 1
             
-            # Log to tensorboard
-            if self.writer is not None:
+            # Update progress bar
+            progress_bar.set_postfix({'loss': f'{loss.item():.4f}'})
+            
+            # Log to TensorBoard (enhanced mode only)
+            if self.enhanced_mode and self.writer is not None and batch_idx % 100 == 0:
                 global_step = self.current_epoch * len(self.train_loader) + batch_idx
-                self.writer.add_scalar('Loss/Train_Batch', loss.item(), global_step)
-                
-                # Log learning rate
-                current_lr = self.optimizer.param_groups[0]['lr']
-                self.writer.add_scalar('Learning_Rate/Current', current_lr, global_step)
-                
-                # Log batch statistics every 10 batches
-                if batch_idx % 10 == 0:
-                    # Log gradient norms
-                    total_norm = 0.0
-                    for p in self.model.parameters():
-                        if p.grad is not None:
-                            param_norm = p.grad.data.norm(2)
-                            total_norm += param_norm.item() ** 2
-                    total_norm = total_norm ** (1. / 2)
-                    self.writer.add_scalar('Gradients/Total_Norm', total_norm, global_step)
-                    
-                    # Log weight and gradient histograms
-                    for name, param in self.model.named_parameters():
-                        if param.requires_grad:
-                            self.writer.add_histogram(f'Weights/{name}', param.data, global_step)
-                            if param.grad is not None:
-                                self.writer.add_histogram(f'Gradients/{name}', param.grad.data, global_step)
+                self.writer.add_scalar('train/batch_loss', loss.item(), global_step)
+                self.writer.add_scalar('train/learning_rate', self.optimizer.param_groups[0]['lr'], global_step)
         
-        avg_loss = total_loss / len(self.train_loader)
+        avg_loss = total_loss / num_batches
+        self.train_losses.append(avg_loss)
+        
+        # Log epoch loss to TensorBoard
+        if self.writer is not None:
+            self.writer.add_scalar('train/epoch_loss', avg_loss, self.current_epoch)
+        
         return avg_loss
     
     def validate_epoch(self) -> float:
-        """Validate for one epoch."""
+        """Validate the model for one epoch."""
         self.model.eval()
         total_loss = 0.0
+        num_batches = 0
         
         with torch.no_grad():
-            for images, coords in self.val_loader:
+            for images, targets in tqdm(self.val_loader, desc='Validation'):
                 images = images.to(self.device)
-                coords = coords.to(self.device)
+                targets = targets.to(self.device)
                 
-                # Normalize coordinates
-                coords_norm = self.coord_normalizer.normalize(coords)
-                
-                # Forward pass
                 outputs = self.model(images)
-                loss = self.criterion(outputs, coords_norm)
+                loss = self.criterion(outputs, targets)
                 
                 total_loss += loss.item()
+                num_batches += 1
         
-        avg_loss = total_loss / len(self.val_loader)
+        avg_loss = total_loss / num_batches
+        self.val_losses.append(avg_loss)
+        
+        # Log validation loss to TensorBoard
+        if self.writer is not None:
+            self.writer.add_scalar('val/epoch_loss', avg_loss, self.current_epoch)
+        
         return avg_loss
     
-    def train(self, num_epochs: int) -> Dict[str, Any]:
-        """Train model for specified number of epochs."""
-        # Initialize enhanced logging
-        try:
-            from logging_utils import TrainingLogger
-            self.training_logger = TrainingLogger(self.config.training.log_dir)
-            self.training_logger.log_device_info(str(self.device))
-            self.training_logger.log_dataset_info(
-                len(self.train_loader) if hasattr(self.train_loader, '__len__') else 0,
-                len(self.val_loader) if hasattr(self.val_loader, '__len__') else 0,
-                0  # Will be set when test_loader is available
-            )
-            
-            total_params = sum(p.numel() for p in self.model.parameters())
-            trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
-            self.training_logger.log_model_info(
-                self.model.__class__.__name__,
-                total_params,
-                trainable_params
-            )
-        except ImportError:
-            self.training_logger = None
+    def train(self) -> Dict[str, Any]:
+        """Train the model for the specified number of epochs."""
+        logger.info(f"Starting training for {self.config.training.max_epochs} epochs")
+        logger.info(f"Device: {self.device}")
+        logger.info(f"Model parameters: {sum(p.numel() for p in self.model.parameters()):,}")
         
-        logger.info(f"Starting training for {num_epochs} epochs on {self.device}")
-        
-        for epoch in range(num_epochs):
+        for epoch in range(self.config.training.max_epochs):
             self.current_epoch = epoch
             
-            # Track epoch start time
-            import time
-            epoch_start_time = time.time()
-            
-            # Train
+            # Training
             train_loss = self.train_epoch()
-            self.train_losses.append(train_loss)
             
-            # Validate
+            # Validation
             val_loss = self.validate_epoch()
-            self.val_losses.append(val_loss)
             
-            # Learning rate scheduler step
-            if self.scheduler:
-                self.scheduler.step(val_loss)
+            # Learning rate scheduling
+            if self.scheduler is not None:
+                if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                    self.scheduler.step(val_loss)
+                else:
+                    self.scheduler.step()
             
-            # Calculate epoch duration
-            epoch_end_time = time.time()
-            training_time = epoch_end_time - epoch_start_time
-            
-            # Log epoch metrics
+            # Log learning rate
             if self.writer is not None:
-                self.writer.add_scalar('Loss/Train_Epoch', train_loss, epoch)
-                self.writer.add_scalar('Loss/Val_Epoch', val_loss, epoch)
-                self.writer.add_scalar('Learning_Rate/Epoch', self.optimizer.param_groups[0]['lr'], epoch)
-                
-                # Log epoch summary statistics
-                self.writer.add_scalar('Performance/Epoch_Duration', training_time, epoch)
-                self.writer.add_scalar('Performance/Batches_per_Second', len(self.train_loader) / training_time, epoch)
-                
-                # Log model parameter statistics
-                total_params = sum(p.numel() for p in self.model.parameters())
-                trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
-                self.writer.add_scalar('Model/Total_Parameters', total_params, epoch)
-                self.writer.add_scalar('Model/Trainable_Parameters', trainable_params, epoch)
-                
-                # Flush writer to ensure data is written to disk immediately
-                self.writer.flush()
-            
-            # Enhanced logging
-            if hasattr(self, 'training_logger') and self.training_logger:
-                self.training_logger.log_epoch_end(epoch, train_loss, val_loss, training_time)
+                self.writer.add_scalar('train/learning_rate', self.optimizer.param_groups[0]['lr'], epoch)
             
             # Save best model
             if val_loss < self.best_val_loss:
                 self.best_val_loss = val_loss
                 self.save_checkpoint('best_model.pth')
             
-            # Log progress
-            logger.info(f"Epoch {epoch + 1}/{num_epochs}: "
-                       f"Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
+            # Log epoch results
+            logger.info(f'Epoch {epoch+1}/{self.config.training.max_epochs}: '
+                       f'Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}')
+            
+            # Enhanced logging
+            if self.enhanced_mode and self.writer is not None:
+                self.writer.add_scalar('train/val_loss_ratio', train_loss/val_loss, epoch)
+                
+                # Log gradient norm (enhanced feature)
+                total_norm = 0
+                for p in self.model.parameters():
+                    if p.grad is not None:
+                        param_norm = p.grad.data.norm(2)
+                        total_norm += param_norm.item() ** 2
+                total_norm = total_norm ** (1. / 2)
+                self.writer.add_scalar('train/gradient_norm', total_norm, epoch)
         
-        # Save final model
-        self.save_checkpoint('final_model.pth')
-        
-        # Close tensorboard writer
-        if self.writer is not None:
-            self.writer.close()
-        
-        # Stop tensorboard process
-        self.stop_tensorboard()
-        
+        logger.info('Training completed!')
         return {
             'train_losses': self.train_losses,
             'val_losses': self.val_losses,
             'best_val_loss': self.best_val_loss
         }
     
-    def save_checkpoint(self, filename: str) -> None:
+    def save_checkpoint(self, filename: str):
         """Save model checkpoint."""
-        checkpoint_path = Path(self.config.training.save_dir) / filename
-        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        torch.save({
+        checkpoint = {
             'epoch': self.current_epoch,
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
+            'scheduler_state_dict': self.scheduler.state_dict() if self.scheduler else None,
             'best_val_loss': self.best_val_loss,
-            'train_losses': self.train_losses,
-            'val_losses': self.val_losses,
             'config': self.config
-        }, checkpoint_path)
+        }
         
-        logger.info(f"Checkpoint saved to {checkpoint_path}")
+        filepath = os.path.join(self.config.training.log_dir, filename)
+        torch.save(checkpoint, filepath)
+        logger.info(f'Checkpoint saved: {filepath}')
     
-    def load_checkpoint(self, filename: str) -> None:
+    def load_checkpoint(self, filename: str):
         """Load model checkpoint."""
-        checkpoint_path = Path(self.config.training.save_dir) / filename
+        filepath = os.path.join(self.config.training.log_dir, filename)
         
-        if not checkpoint_path.exists():
-            raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+        if not os.path.exists(filepath):
+            raise FileNotFoundError(f"Checkpoint not found: {filepath}")
         
-        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        checkpoint = torch.load(filepath, map_location=self.device)
         
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        
+        if checkpoint['scheduler_state_dict'] and self.scheduler:
+            self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        
         self.current_epoch = checkpoint['epoch']
         self.best_val_loss = checkpoint['best_val_loss']
-        self.train_losses = checkpoint.get('train_losses', [])
-        self.val_losses = checkpoint.get('val_losses', [])
         
-        logger.info(f"Checkpoint loaded from {checkpoint_path}")
-
-
-class LocationRegressorTrainer(Trainer):
-    """Trainer specifically for LocationRegressor model."""
+        logger.info(f'Checkpoint loaded: {filepath}')
     
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        
-    def compute_coordinate_error(self, outputs: torch.Tensor, targets_norm: torch.Tensor) -> torch.Tensor:
-        """Compute coordinate prediction error in degrees with proper longitude handling."""
-        # outputs and targets_norm are already normalized
-        # Denormalize both to get real-world coordinates
-        outputs_denorm = self.coord_normalizer.denormalize(outputs)
-        targets_denorm = self.coord_normalizer.denormalize(targets_norm)
-        
-        # Use proper coordinate error calculation with longitude wraparound
-        coord_errors = self.coord_normalizer.compute_coordinate_error_degrees(outputs_denorm, targets_denorm)
-        
-        return coord_errors.mean()
-    
-    def validate_epoch(self) -> float:
-        """Validate with additional coordinate error metrics."""
-        self.model.eval()
-        total_loss = 0.0
-        total_coord_error = 0.0
-        
-        with torch.no_grad():
-            for images, coords in self.val_loader:
-                images = images.to(self.device)
-                coords = coords.to(self.device)
-                
-                # Normalize coordinates
-                coords_norm = self.coord_normalizer.normalize(coords)
-                
-                # Forward pass
-                outputs = self.model(images)
-                outputs_constrained = torch.sigmoid(outputs)
-                loss = self.criterion(outputs_constrained, coords_norm)
-                
-                # Compute coordinate error
-                coord_error = self.compute_coordinate_error(outputs_constrained, coords_norm)
-                
-                total_loss += loss.item()
-                total_coord_error += coord_error.item()
-        
-        avg_loss = total_loss / len(self.val_loader)
-        avg_coord_error = total_coord_error / len(self.val_loader)
-        
-        # Log coordinate error
+    def cleanup(self):
+        """Cleanup resources."""
+        # Close TensorBoard writer
         if self.writer is not None:
-            self.writer.add_scalar('Error/Coordinate_Degrees', avg_coord_error, self.current_epoch)
-            
-            # Log additional metrics
-            self.writer.add_scalar('Error/Coordinate_Degrees_Rolling', avg_coord_error, self.current_epoch)
-            
-            # Log model weights periodically (every 5 epochs)
-            if self.current_epoch % 5 == 0:
-                for name, param in self.model.named_parameters():
-                    if param.requires_grad:
-                        self.writer.add_histogram(f'Weights_Epoch/{name}', param.data, self.current_epoch)
-                        self.writer.add_scalar(f'Weights_Mean/{name}', param.data.mean(), self.current_epoch)
-                        self.writer.add_scalar(f'Weights_Std/{name}', param.data.std(), self.current_epoch)
+            self.writer.close()
         
-        return avg_loss
-
-
-class AutoEncoderTrainer(Trainer):
-    """Trainer for AutoEncoder model."""
-    
-    def _setup_criterion(self) -> nn.Module:
-        """Setup reconstruction loss."""
-        return nn.MSELoss()
-    
-    def train_epoch(self) -> float:
-        """Train autoencoder for one epoch."""
-        self.model.train()
-        total_loss = 0.0
-        
-        pbar = tqdm(self.train_loader, desc=f"Epoch {self.current_epoch + 1}")
-        
-        for batch_idx, (images, _) in enumerate(pbar):
-            images = images.to(self.device)
-            
-            # Forward pass
-            self.optimizer.zero_grad()
-            reconstructed = self.model(images)
-            loss = self.criterion(reconstructed, images)
-            
-            # Backward pass
-            loss.backward()
-            self.optimizer.step()
-            
-            total_loss += loss.item()
-            pbar.set_postfix({'loss': loss.item()})
-            
-            # Log to tensorboard
-            if self.writer is not None:
-                global_step = self.current_epoch * len(self.train_loader) + batch_idx
-                self.writer.add_scalar('Loss/Train_Batch', loss.item(), global_step)
-                
-                # Log learning rate
-                current_lr = self.optimizer.param_groups[0]['lr']
-                self.writer.add_scalar('Learning_Rate/Current', current_lr, global_step)
-                
-                # Log batch statistics every 10 batches
-                if batch_idx % 10 == 0:
-                    # Log gradient norms
-                    total_norm = 0.0
-                    for p in self.model.parameters():
-                        if p.grad is not None:
-                            param_norm = p.grad.data.norm(2)
-                            total_norm += param_norm.item() ** 2
-                    total_norm = total_norm ** (1. / 2)
-                    self.writer.add_scalar('Gradients/Total_Norm', total_norm, global_step)
+        # Stop TensorBoard server
+        if self.tensorboard_process is not None:
+            logger.info("Stopping TensorBoard server...")
+            if isinstance(self.tensorboard_process, subprocess.Popen):
+                try:
+                    # Try graceful shutdown first
+                    self.tensorboard_process.terminate()
                     
-                    # Log weight and gradient histograms
-                    for name, param in self.model.named_parameters():
-                        if param.requires_grad:
-                            self.writer.add_histogram(f'Weights/{name}', param.data, global_step)
-                            if param.grad is not None:
-                                self.writer.add_histogram(f'Gradients/{name}', param.grad.data, global_step)
-        
-        avg_loss = total_loss / len(self.train_loader)
-        return avg_loss
+                    # Wait up to 5 seconds for graceful shutdown
+                    try:
+                        self.tensorboard_process.wait(timeout=5)
+                        logger.info("TensorBoard server stopped gracefully")
+                    except subprocess.TimeoutExpired:
+                        # Force kill if graceful shutdown fails
+                        logger.warning("TensorBoard server did not stop gracefully, force killing...")
+                        self.tensorboard_process.kill()
+                        self.tensorboard_process.wait()
+                        logger.info("TensorBoard server force killed")
+                        
+                except Exception as e:
+                    logger.error(f"Error stopping TensorBoard server: {e}")
+                    # Try to kill the process as a last resort
+                    try:
+                        self.tensorboard_process.kill()
+                    except:
+                        pass
+                finally:
+                    self.tensorboard_process = None
+            else:
+                # Simple boolean flag case
+                logger.info("TensorBoard server was launched externally")
+                self.tensorboard_process = None
+
+
+class LocationRegressorTrainer(UnifiedTrainer):
+    """Specialized trainer for location regression models."""
     
-    def validate_epoch(self) -> float:
-        """Validate autoencoder for one epoch."""
+    def __init__(self, model: LocationRegressor, train_loader: DataLoader, 
+                 val_loader: DataLoader, config, device: Optional[str] = None, enhanced_mode: bool = True):
+        super().__init__(model, train_loader, val_loader, config, device, enhanced_mode)
+    
+    def evaluate_coordinates(self, test_loader: DataLoader) -> Dict[str, float]:
+        """Evaluate coordinate prediction accuracy."""
         self.model.eval()
-        total_loss = 0.0
+        all_predictions = []
+        all_targets = []
         
         with torch.no_grad():
-            for images, _ in self.val_loader:
+            for images, targets in test_loader:
                 images = images.to(self.device)
+                targets = targets.to(self.device)
                 
-                # Forward pass
-                reconstructed = self.model(images)
-                loss = self.criterion(reconstructed, images)
+                predictions = self.model(images)
                 
-                total_loss += loss.item()
+                all_predictions.append(predictions.cpu())
+                all_targets.append(targets.cpu())
         
-        avg_loss = total_loss / len(self.val_loader)
-        return avg_loss
+        all_predictions = torch.cat(all_predictions, dim=0)
+        all_targets = torch.cat(all_targets, dim=0)
+        
+        # Calculate coordinate errors
+        coord_errors = self.coord_normalizer.compute_coordinate_error_degrees(
+            all_predictions, all_targets
+        )
+        haversine_distances = self.coord_normalizer.compute_haversine_distance(
+            all_predictions, all_targets
+        )
+        
+        return {
+            'mean_coordinate_error_deg': coord_errors.mean().item(),
+            'median_coordinate_error_deg': coord_errors.median().item(),
+            'mean_haversine_km': haversine_distances.mean().item(),
+            'median_haversine_km': haversine_distances.median().item()
+        }
+
+
+class AutoEncoderTrainer(UnifiedTrainer):
+    """Specialized trainer for autoencoder models."""
+    
+    def __init__(self, model: AutoEncoder, train_loader: DataLoader, 
+                 val_loader: DataLoader, config, device: Optional[str] = None, enhanced_mode: bool = True):
+        super().__init__(model, train_loader, val_loader, config, device, enhanced_mode)
+    
+    def generate_reconstructions(self, test_loader: DataLoader, num_samples: int = 8) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Generate reconstructed images for visualization."""
+        self.model.eval()
+        original_images = []
+        reconstructed_images = []
+        
+        with torch.no_grad():
+            for i, (images, _) in enumerate(test_loader):
+                images = images.to(self.device)
+                reconstructions = self.model(images)
+                
+                original_images.append(images.cpu())
+                reconstructed_images.append(reconstructions.cpu())
+                
+                if len(original_images) * images.shape[0] >= num_samples:
+                    break
+        
+        original_images = torch.cat(original_images, dim=0)[:num_samples]
+        reconstructed_images = torch.cat(reconstructed_images, dim=0)[:num_samples]
+        
+        return original_images, reconstructed_images
+
+
+# Backward compatibility aliases
+Trainer = UnifiedTrainer
+EnhancedTrainer = UnifiedTrainer
