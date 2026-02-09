@@ -724,8 +724,3 @@ class AutoEncoderTrainer(UnifiedTrainer):
         reconstructed_images = torch.cat(reconstructed_images, dim=0)[:num_samples]
         
         return original_images, reconstructed_images
-
-
-# Backward compatibility aliases
-Trainer = UnifiedTrainer
-EnhancedTrainer = UnifiedTrainer

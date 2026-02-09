@@ -1,13 +1,28 @@
-**/*.jpeg
-**/*.jpg
-**/*.png
-**/*.pdf
-**/*.pth
-**/.DS_Store
+__pycache__/
+*.pyc
+
+# Data
+images/
+combined/
+raw_data/
+outputs/
+
+# Models
+*.pth
+
+# Media
+*.jpeg
+*.jpg
+*.png
+*.pdf
+
+# Logs
+logs/
 runs/
-Private Projects/data
-Project/combined
-Project/images
-Project/download
-Project/pics_with_coords/all
-Project/__pycache__
+
+# OS
+.DS_Store
+
+# Secrets
+api_key.txt
+.env

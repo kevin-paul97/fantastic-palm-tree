@@ -6,7 +6,6 @@ import logging
 import argparse
 import torch
 from pathlib import Path
-from typing import Optional
 
 from config import Config
 from data import EPICDataDownloader, CoordinateExtractor
@@ -26,12 +25,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Setup enhanced logging if available
-try:
-    from logging_utils import setup_logging
-    setup_logging("INFO")
-except ImportError:
-    pass
 
 
 def setup_data_pipeline(config):

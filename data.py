@@ -291,17 +291,12 @@ class ImageDownloader:
         self.images_dir = Path(self.config.images_dir)
         
         # Set up authenticated session
-        self.session = requests.Session()
         try:
-            from github_config_loader import get_authenticated_requests_session
-            auth_session = get_authenticated_requests_session()
-            if auth_session is not None:
-                self.session = auth_session
-                logger.info("Using authenticated requests session")
-            else:
-                logger.warning("API key manager returned None, using unauthenticated requests")
+            from api_key_manager import get_authenticated_requests_session
+            self.session = get_authenticated_requests_session()
         except ImportError:
             logger.warning("API key manager not available, using unauthenticated requests")
+            self.session = requests.Session()
     
     def download_image(self, image_name: str, date: str) -> bool:
         """Download a single image with proper filename handling."""
@@ -309,12 +304,8 @@ class ImageDownloader:
             # Ensure image_name has .png extension
             if not image_name.endswith('.png'):
                 image_name = f"{image_name}.png"
-            
-            # Construct proper EPIC archive URL
-            # Use image name as-is from metadata, ensure .png extension
+
             year, month, day = date[:4], date[5:7], date[8:10]
-            if not image_name.endswith('.png'):
-                image_name = f"{image_name}.png"
             
             # Use the original EPIC archive domain (not API endpoint)
             # Format: https://epic.gsfc.nasa.gov/archive/natural/2019/05/30/png/epic_RGB_20190530011359.png

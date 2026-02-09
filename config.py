@@ -4,7 +4,7 @@ Configuration management for the satellite image coordinate prediction project.
 
 import os
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import List
 
 
 @dataclass
@@ -13,7 +13,6 @@ class DataConfig:
     raw_data_dir: str = "raw_data"
     images_dir: str = "images"
     combined_dir: str = "combined"
-    # download_dir: str = "download"  # Deprecated - use images_dir instead
     
     # Image processing
     image_size: int = 64
@@ -40,8 +39,6 @@ class ModelConfig:
     # Linear layers
     hidden_dim: int = 128
     output_dim: int = 2
-    
-
 
 
 @dataclass
