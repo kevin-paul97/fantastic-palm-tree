@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any
 from tqdm import tqdm
+from datetime import datetime
 
 try:
     from torch.utils.tensorboard.writer import SummaryWriter
@@ -92,7 +93,12 @@ class UnifiedTrainer:
     def _setup_tensorboard(self):
         """Setup TensorBoard writer with configurable error handling."""
         try:
-            # Ensure log directory exists and is writable
+            # Create timestamped run directory for organized logging
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.tensorboard_run_dir = os.path.join(self.config.training.log_dir, f"run_{timestamp}")
+            os.makedirs(self.tensorboard_run_dir, exist_ok=True)
+            
+            # Ensure base log directory exists and is writable
             os.makedirs(self.config.training.log_dir, exist_ok=True)
             
             if self.enhanced_mode:
@@ -108,7 +114,7 @@ class UnifiedTrainer:
                 # Create writer with enhanced settings
                 if SummaryWriter is not None:
                     self.writer = SummaryWriter(
-                        log_dir=self.config.training.log_dir,
+                        log_dir=self.tensorboard_run_dir,
                         comment=f'_device_{self.config.training.device}_batch_{self.config.training.batch_size}',
                         flush_secs=10  # Auto-flush every 10 seconds
                     )
@@ -125,7 +131,7 @@ class UnifiedTrainer:
                 # Basic setup
                 if SummaryWriter is not None:
                     self.writer = SummaryWriter(
-                        log_dir=self.config.training.log_dir,
+                        log_dir=self.tensorboard_run_dir,
                         comment=f'_device_{self.config.training.device}_batch_{self.config.training.batch_size}'
                     )
                 else:
@@ -138,7 +144,10 @@ class UnifiedTrainer:
             if self.config.training.launch_tensorboard:
                 self._launch_tensorboard()
                 
-            logger.info("TensorBoard writer initialized successfully")
+            logger.info(f"TensorBoard writer initialized successfully")
+            logger.info(f"Logs directory: {self.tensorboard_run_dir}")
+            logger.info(f"View with: tensorboard --logdir {self.tensorboard_run_dir}")
+            logger.info(f"Or view all runs with: tensorboard --logdir {os.path.dirname(self.tensorboard_run_dir)}")
             
         except Exception as e:
             logger.error(f"Failed to initialize TensorBoard writer: {e}")
@@ -148,8 +157,14 @@ class UnifiedTrainer:
         """Launch TensorBoard server with enhanced error handling."""
         try:
             if self.enhanced_mode:
-                # Enhanced launch with multiple fallback methods
-                success = start_tensorboard(self.config.training.log_dir, 6006, open_browser=False)
+                # Enhanced launch with multiple fallback methods - launch the specific run directory
+                success = start_tensorboard(self.tensorboard_run_dir, 6006, open_browser=False)
+                if success:
+                    logger.info(f"TensorBoard launched for current run: {self.tensorboard_run_dir}")
+                    logger.info(f"Access at: http://localhost:6006")
+                else:
+                    logger.warning("Failed to auto-launch TensorBoard, you can launch manually:")
+                    logger.info(f"tensorboard --logdir {self.tensorboard_run_dir}")
                 if success:
                     # Store the process info (simplified version)
                     self.tensorboard_process = True
@@ -167,7 +182,7 @@ class UnifiedTrainer:
                 
                 # Launch TensorBoard using python -m tensorboard.main (more reliable)
                 cmd = [sys.executable, "-m", "tensorboard.main", 
-                       "--logdir", self.config.training.log_dir,
+                       "--logdir", self.tensorboard_run_dir,
                        "--port", "6006",
                        "--host", "localhost"]
                 
@@ -315,20 +330,72 @@ class UnifiedTrainer:
         logger.info(f"Starting training for {self.config.training.max_epochs} epochs")
         logger.info(f"Device: {self.device}")
         logger.info(f"Model parameters: {total_params}")
+
+    def train_epoch(self):
+        """Train for one epoch."""
+        self.model.train()
+        total_loss = 0.0
         
-        for epoch in tqdm(range(self.config.training.max_epochs), desc="Training epochs"):
+        for batch_idx, (images, targets) in enumerate(tqdm(self.train_loader, desc='Training', leave=False)):
+            images = images.to(self.device)
+            targets = targets.to(self.device)
+            
+            # Forward pass
+            self.optimizer.zero_grad()
+            outputs = self.model(images)
+            loss = self.criterion(outputs, targets)
+            
+            # Backward pass
+            loss.backward()
+            
+            # Gradient clipping
+            if self.config.training.gradient_clipping > 0:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.training.gradient_clipping)
+            
+            self.optimizer.step()
+            
+            total_loss += loss.item()
+        
+        avg_loss = total_loss / len(self.train_loader)
+        self.train_losses.append(avg_loss)
+        
+        # Log to TensorBoard
+        if self.writer is not None:
+            self.writer.add_scalar('train/loss', avg_loss, self.current_epoch)
+        
+        return avg_loss
+    
+    def validate_epoch(self):
+        """Validate for one epoch."""
+        self.model.eval()
+        total_loss = 0.0
+        
+        with torch.no_grad():
+            for images, targets in tqdm(self.val_loader, desc='Validation', leave=False):
+                images = images.to(self.device)
+                targets = targets.to(self.device)
+                
+                outputs = self.model(images)
+                loss = self.criterion(outputs, targets)
+                
+                total_loss += loss.item()
+        
+        avg_loss = total_loss / len(self.val_loader)
+        self.val_losses.append(avg_loss)
+        
+        # Log to TensorBoard
+        if self.writer is not None:
+            self.writer.add_scalar('val/loss', avg_loss, self.current_epoch)
+        
+        return avg_loss
+
+    def train(self):
         """Train the model for the specified number of epochs."""
         logger.info(f"Starting training for {self.config.training.max_epochs} epochs")
         logger.info(f"Device: {self.device}")
         logger.info(f"Model parameters: {sum(p.numel() for p in self.model.parameters()):,}")
         
-        logger.info(f"Starting training for {self.config.training.max_epochs} epochs")
-        logger.info(f"Device: {self.device}")
-        logger.info(f"Model parameters: {sum(p.numel() for p in self.model.parameters()):,}")
-        
-        from tqdm import tqdm
-        
-        for epoch in range(self.config.training.max_epochs):
+        for epoch in tqdm(range(self.config.training.max_epochs), desc="Training epochs"):
             self.current_epoch = epoch
             
             # Training
@@ -379,10 +446,6 @@ class UnifiedTrainer:
         
         # Log final metrics to TensorBoard
         if self.writer is not None:
-            # Initialize variables to avoid unbound errors
-            train_improvement = 0
-            val_improvement = 0
-            epochs_to_best = self.config.training.max_epochs
             # Final hyperparameters summary
             final_hparams = {
                 'model_type': self.model.__class__.__name__,
@@ -410,9 +473,9 @@ class UnifiedTrainer:
             # Log loss curve statistics
             if self.train_losses:
                 self.writer.add_scalar('final/train_loss_mean', sum(self.train_losses)/len(self.train_losses), self.config.training.max_epochs-1)
-                    self.writer.add_scalar('final/train_loss_min', min(self.train_losses), self.config.training.max_epochs-1)
-                    self.writer.add_scalar('final/train_loss_max', max(self.train_losses), self.config.training.max_epochs-1)
-                    self.writer.add_scalar('final/train_loss_final', self.train_losses[-1], self.config.training.max_epochs-1)
+                self.writer.add_scalar('final/train_loss_min', min(self.train_losses), self.config.training.max_epochs-1)
+                self.writer.add_scalar('final/train_loss_max', max(self.train_losses), self.config.training.max_epochs-1)
+                self.writer.add_scalar('final/train_loss_final', self.train_losses[-1], self.config.training.max_epochs-1)
                 
                 if self.val_losses:
                     self.writer.add_scalar('final/val_loss_mean', sum(self.val_losses)/len(self.val_losses), self.config.training.max_epochs-1)
@@ -430,22 +493,22 @@ class UnifiedTrainer:
                 
                 # Create summary table
                 summary_text = f"""
-Training Summary:
-- Model: {final_hparams['model_type']}
-- Total Epochs: {final_hparams['total_epochs']}
-- Best Val Loss: {final_hparams['best_val_loss']:.6f}
-- Final Train Loss: {final_hparams['final_train_loss']:.6f}
-- Final Val Loss: {final_hparams['final_val_loss']:.6f}
-- Train Improvement: {train_improvement:.2f}% (if applicable)
-- Val Improvement: {val_improvement:.2f}% (if applicable)
-- Epochs to Best: {epochs_to_best}
-- Convergence Rate: {epochs_to_best / final_hparams['total_epochs']:.2f}
-- Optimizer: {final_hparams['optimizer']}
-- Learning Rate: {final_hparams['learning_rate']}
-- Batch Size: {final_hparams['batch_size']}
-- Loss Function: {final_hparams['loss_function']}
-- Scheduler: {final_hparams['scheduler']}
-- Device: {final_hparams['device']}
+ Training Summary:
+ - Model: {final_hparams['model_type']}
+ - Total Epochs: {final_hparams['total_epochs']}
+ - Best Val Loss: {final_hparams['best_val_loss']:.6f}
+ - Final Train Loss: {final_hparams['final_train_loss']:.6f}
+ - Final Val Loss: {final_hparams['final_val_loss']:.6f}
+ - Train Improvement: {train_improvement:.2f}% (if applicable)
+ - Val Improvement: {val_improvement:.2f}% (if applicable)
+ - Epochs to Best: {epochs_to_best}
+ - Convergence Rate: {epochs_to_best / final_hparams['total_epochs']:.2f}
+ - Optimizer: {getattr(self.config.training, 'optimizer', 'N/A')}
+ - Learning Rate: {getattr(self.config.training, 'learning_rate', 'N/A')}
+ - Batch Size: {getattr(self.config.training, 'batch_size', 'N/A')}
+ - Loss Function: {getattr(self.config.training, 'loss_function', 'N/A')}
+ - Scheduler: {getattr(self.config.training, 'scheduler', 'N/A')}
+ - Device: {str(self.device)}
             """
                 
                 self.writer.add_text('final/training_summary', summary_text)
@@ -492,21 +555,53 @@ Training Summary:
             'optimizer_state_dict': self.optimizer.state_dict(),
             'scheduler_state_dict': self.scheduler.state_dict() if self.scheduler else None,
             'best_val_loss': self.best_val_loss,
-            'config': self.config
+            # Save essential config values as dict instead of full config object
+            'config_dict': {
+                'model': {
+                    'input_channels': self.config.model.input_channels,
+                    'hidden_dim': self.config.model.hidden_dim,
+                    'conv_channels': self.config.model.conv_channels,
+                    'kernel_size': self.config.model.kernel_size,
+                    'pool_size': self.config.model.pool_size,
+                    'activation': self.config.model.activation,
+                    'output_dim': self.config.model.output_dim
+                },
+                'training': {
+                    'batch_size': self.config.training.batch_size,
+                    'learning_rate': self.config.training.learning_rate,
+                    'max_epochs': self.config.training.max_epochs,
+                    'optimizer': self.config.training.optimizer,
+                    'weight_decay': self.config.training.weight_decay,
+                    'loss_function': self.config.training.loss_function,
+                    'scheduler': self.config.training.scheduler,
+                    'step_size': self.config.training.step_size,
+                    'gamma': self.config.training.gamma,
+                    'gradient_clipping': self.config.training.gradient_clipping,
+                    'device': self.config.training.device
+                }
+            }
         }
         
-        filepath = os.path.join(self.config.training.log_dir, filename)
+        filepath = os.path.join(self.config.training.save_dir, filename)
         torch.save(checkpoint, filepath)
         logger.info(f'Checkpoint saved: {filepath}')
     
     def load_checkpoint(self, filename: str):
         """Load model checkpoint."""
-        filepath = os.path.join(self.config.training.log_dir, filename)
+        filepath = os.path.join(self.config.training.save_dir, filename)
         
         if not os.path.exists(filepath):
             raise FileNotFoundError(f"Checkpoint not found: {filepath}")
         
-        checkpoint = torch.load(filepath, map_location=self.device)
+        # Handle PyTorch 2.6+ weights_only security
+        try:
+            checkpoint = torch.load(filepath, map_location=self.device)
+        except Exception as e:
+            if "weights_only" in str(e):
+                # Fallback for PyTorch 2.6+
+                checkpoint = torch.load(filepath, map_location=self.device, weights_only=False)
+            else:
+                raise e
         
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])

@@ -63,8 +63,8 @@ def setup_data_pipeline(config):
         
         # Create visualizations
         logger.info("Creating coordinate distribution plots...")
-        plot_coordinate_distribution(lat_coords, lon_coords, save_path="outputs/coordinate_distribution.png")
-        plot_world_map_with_coordinates(lat_coords, lon_coords, save_path="outputs/coordinate_world_map.png")
+        plot_coordinate_distribution(lat_coords, lon_coords, save_path="outputs/coordinate_distribution.png", show_plot=False)
+        plot_world_map_with_coordinates(lat_coords, lon_coords, save_path="outputs/coordinate_world_map.png", show_plot=False)
         stats_table = create_coordinate_statistics_table(lat_coords, lon_coords)
         
         # Save statistics table
@@ -98,6 +98,14 @@ def train_model(config, model_type: str = "regressor"):
     os.makedirs(config.training.save_dir, exist_ok=True)
     os.makedirs("outputs", exist_ok=True)
     
+    # Create timestamped run directory info
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = f"{config.training.log_dir}/run_{timestamp}"
+    logger.info(f"TensorBoard logs will be saved to: {run_dir}")
+    logger.info(f"Models will be saved to: {config.training.save_dir}")
+    logger.info(f"To view TensorBoard: tensorboard --logdir {config.training.log_dir}")
+    
     # Create trainer
     trainer = trainer_class(model, train_loader, val_loader, config)
     
@@ -124,7 +132,35 @@ def evaluate_model_performance(config, model_path: str):
     
     # Load model and create data
     model = create_location_regressor(config)
-    model.load_state_dict(torch.load(model_path, map_location=config.training.device))
+    
+    # Handle PyTorch 2.6+ weights_only security
+    try:
+        # Try loading with new security default
+        model.load_state_dict(torch.load(model_path, map_location=config.training.device))
+    except Exception as e:
+        if "weights_only" in str(e):
+            # Fallback for PyTorch 2.6+ - load full checkpoint with weights_only=False
+            try:
+                checkpoint = torch.load(model_path, map_location=config.training.device, weights_only=False)
+                if 'model_state_dict' in checkpoint:
+                    model.load_state_dict(checkpoint['model_state_dict'])
+                else:
+                    model.load_state_dict(checkpoint)
+                logger.info("Loaded model checkpoint successfully (weights_only=False fallback)")
+            except Exception as fallback_e:
+                # Try adding safe globals for Config
+                try:
+                    torch.serialization.add_safe_globals([Config])
+                    checkpoint = torch.load(model_path, map_location=config.training.device)
+                    if 'model_state_dict' in checkpoint:
+                        model.load_state_dict(checkpoint['model_state_dict'])
+                    else:
+                        model.load_state_dict(checkpoint)
+                    logger.info("Loaded model checkpoint successfully (safe globals fallback)")
+                except Exception as safe_e:
+                    raise Exception(f"Failed to load model with all fallbacks: {e}, {fallback_e}, {safe_e}")
+        else:
+            raise e
     
     _, _, test_loader = create_dataloaders(config)
     
@@ -224,6 +260,7 @@ Examples:
     
     # Override config with command line arguments
     if args.epochs:
+        config.training.max_epochs = args.epochs
         config.training.epochs = args.epochs
     if args.batch_size:
         config.training.batch_size = args.batch_size

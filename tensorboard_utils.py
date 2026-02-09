@@ -30,10 +30,26 @@ def is_port_available(port: int) -> bool:
 def start_tensorboard(logdir: str, port: int, open_browser: bool = True):
     """Start TensorBoard server with multiple fallback methods."""
     
-    # Check if log directory exists
+    # If logdir is a specific run directory, ensure it exists
+    # If it's the base tensorboard directory, check for runs inside
     if not os.path.exists(logdir):
-        logger.error(f"Log directory does not exist: {logdir}")
-        return False
+        # Check if this is the base logs directory and we should look for tensorboard subdir
+        base_logs_dir = os.path.dirname(logdir) if os.path.basename(logdir) == "tensorboard" else None
+        if base_logs_dir and os.path.exists(os.path.join(base_logs_dir, "tensorboard")):
+            logdir = os.path.join(base_logs_dir, "tensorboard")
+        elif not os.path.exists(logdir):
+            logger.error(f"Log directory does not exist: {logdir}")
+            return False
+    
+    # If it's the base tensorboard directory, look for the latest run
+    if os.path.basename(logdir) == "tensorboard" and os.path.isdir(logdir):
+        runs = [d for d in os.listdir(logdir) if d.startswith("run_") and os.path.isdir(os.path.join(logdir, d))]
+        if runs:
+            latest_run = sorted(runs)[-1]  # Get the latest run
+            logdir = os.path.join(logdir, latest_run)
+            logger.info(f"Using latest TensorBoard run: {logdir}")
+        else:
+            logger.warning(f"No runs found in {logdir}, using directory as-is")
     
     if not is_port_available(port):
         logger.info(f"TensorBoard already running on http://localhost:{port}")
@@ -167,7 +183,7 @@ def main():
     parser = argparse.ArgumentParser(description="TensorBoard utility for satellite coordinate prediction")
     parser.add_argument("action", choices=["start", "stop", "status"], 
                        help="Action to perform")
-    parser.add_argument("--logdir", type=str, default="logs",
+    parser.add_argument("--logdir", type=str, default="logs/tensorboard",
                        help="TensorBoard log directory")
     parser.add_argument("--port", type=int, default=6006,
                        help="TensorBoard port")

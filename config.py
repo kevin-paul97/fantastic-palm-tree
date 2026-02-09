@@ -63,7 +63,7 @@ class TrainingConfig:
     gradient_clipping: float = 0.0
     
     # Logging
-    log_dir: str = "logs"
+    log_dir: str = "logs/tensorboard"
     save_dir: str = "models"
     
     # TensorBoard
