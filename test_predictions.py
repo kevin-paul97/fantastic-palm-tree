@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-Test model predictions on satellite images - single or multiple samples.
+Test model predictions on satellite images - single, multiple, or world map.
 """
 
 import argparse
 import math
 import random
 import torch
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from mpl_toolkits.basemap import Basemap
 import numpy as np
@@ -22,10 +24,15 @@ logger = logging.getLogger(__name__)
 
 
 def load_model(config, model_path: str):
-    """Load trained model from checkpoint."""
+    """Load trained model from checkpoint or raw state dict."""
     model = create_location_regressor(config)
     checkpoint = torch.load(model_path, map_location=config.training.device, weights_only=False)
-    model.load_state_dict(checkpoint['model_state_dict'])
+
+    if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+        model.load_state_dict(checkpoint['model_state_dict'])
+    else:
+        model.load_state_dict(checkpoint)
+
     model.eval()
     model.to(torch.device(config.training.device))
     return model
@@ -180,11 +187,49 @@ def plot_multiple(images, true_list, pred_list, save_path=None, show_plot=True):
         plt.close()
 
 
+def plot_world_error_map(true_list, pred_list, save_path=None, show_plot=True):
+    """Plot all predictions on a world map with dots colored by error magnitude."""
+    errors = np.array([haversine_km(t, p) for t, p in zip(true_list, pred_list)])
+    true_arr = np.array(true_list)  # [N, 2] with [lon, lat]
+
+    fig = plt.figure(figsize=(16, 10))
+    m = Basemap(projection='mill', llcrnrlat=-60, urcrnrlat=85,
+                llcrnrlon=-180, urcrnrlon=180, resolution='c')
+    m.drawcoastlines(linewidth=0.5)
+    m.drawcountries(linewidth=0.25)
+    m.fillcontinents(color='lightgray', lake_color='lightblue')
+    m.drawmapboundary(fill_color='lightblue')
+    m.drawmeridians(np.arange(-180, 181, 60), labels=[0, 0, 0, 1], fontsize=10)
+    m.drawparallels(np.arange(-90, 91, 30), labels=[1, 0, 0, 0], fontsize=10)
+
+    x, y = m(true_arr[:, 0], true_arr[:, 1])
+    scatter = m.scatter(x, y, c=errors, cmap='RdYlGn_r', s=40, alpha=0.8,
+                        edgecolors='black', linewidth=0.3, zorder=5)
+
+    cbar = plt.colorbar(scatter, orientation='horizontal', pad=0.05, shrink=0.7)
+    cbar.set_label('Prediction Error (km)', fontsize=12)
+
+    plt.title(f'Prediction Errors ({len(errors)} samples)\n'
+              f'Mean: {errors.mean():.0f} km | Median: {np.median(errors):.0f} km | '
+              f'Min: {errors.min():.0f} km | Max: {errors.max():.0f} km',
+              fontsize=14, fontweight='bold')
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        logger.info(f"World error map saved to {save_path}")
+    if show_plot:
+        plt.show()
+    else:
+        plt.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Test model predictions on satellite images")
     parser.add_argument("--model_path", type=str, required=True, help="Path to trained model")
     parser.add_argument("--num_samples", type=int, default=1,
                         help="Number of test samples (1 for single, >1 for multiple)")
+    parser.add_argument("--world_map", action="store_true",
+                        help="Generate world map with predictions colored by error")
     parser.add_argument("--config", type=str, help="Path to config file")
     parser.add_argument("--output_dir", type=str, default="outputs")
     parser.add_argument("--show", action="store_true", help="Show plots interactively")
@@ -221,7 +266,11 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(exist_ok=True)
 
-    if args.num_samples == 1:
+    if args.world_map:
+        save_path = output_dir / f"world_error_map_{args.num_samples}.png"
+        plot_world_error_map(true_list, pred_list,
+                             save_path=str(save_path), show_plot=args.show)
+    elif args.num_samples == 1:
         save_path = output_dir / "single_prediction_test.png"
         plot_single(images[0], true_list[0], pred_list[0],
                     save_path=str(save_path), show_plot=args.show)

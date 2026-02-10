@@ -103,9 +103,9 @@ def train_model(config, model_type: str = "regressor"):
         results = trainer.train()
         logger.info(f"Training complete! Best validation loss: {results['best_val_loss']:.4f}")
         
-        # Save final model
+        # Save final model as checkpoint
         final_model_path = os.path.join(config.training.save_dir, f"{model_type}_final.pth")
-        torch.save(model.state_dict(), final_model_path)
+        torch.save({'model_state_dict': model.state_dict()}, final_model_path)
         logger.info(f"Model saved to: {final_model_path}")
         
         return final_model_path
