@@ -22,7 +22,7 @@ except ImportError:
 
 from torch.utils.data import DataLoader
 
-from models import LocationRegressor, AutoEncoder
+from models import LocationRegressor
 from datasets import CoordinateNormalizer
 from tensorboard_utils import is_port_available, start_tensorboard
 
@@ -696,31 +696,3 @@ class LocationRegressorTrainer(UnifiedTrainer):
             }
 
 
-class AutoEncoderTrainer(UnifiedTrainer):
-    """Specialized trainer for autoencoder models."""
-    
-    def __init__(self, model: AutoEncoder, train_loader: DataLoader, 
-                 val_loader: DataLoader, config, device: Optional[str] = None, enhanced_mode: bool = True):
-        super().__init__(model, train_loader, val_loader, config, device, enhanced_mode)
-    
-    def generate_reconstructions(self, test_loader: DataLoader, num_samples: int = 8) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Generate reconstructed images for visualization."""
-        self.model.eval()
-        original_images = []
-        reconstructed_images = []
-        
-        with torch.no_grad():
-            for i, (images, _) in enumerate(test_loader):
-                images = images.to(self.device)
-                reconstructions = self.model(images)
-                
-                original_images.append(images.cpu())
-                reconstructed_images.append(reconstructions.cpu())
-                
-                if len(original_images) * images.shape[0] >= num_samples:
-                    break
-        
-        original_images = torch.cat(original_images, dim=0)[:num_samples]
-        reconstructed_images = torch.cat(reconstructed_images, dim=0)[:num_samples]
-        
-        return original_images, reconstructed_images

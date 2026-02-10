@@ -322,45 +322,27 @@ def visualize_sample_images(
     rows = (num_samples + cols - 1) // cols
     
     fig, axes = plt.subplots(rows, cols, figsize=(15, 4 * rows))
-    if rows == 1:
-        axes = [axes]
-    
+    axes = np.atleast_2d(axes)
+
     for i in range(num_samples):
         row = i // cols
         col = i % cols
-        
+        ax = axes[row][col]
+
         # Convert tensor to image
         img = images[i].squeeze().cpu().numpy()
         if img.ndim == 3:  # RGB
             img = np.transpose(img, (1, 2, 0))
-        
-        # Plot image
-        if rows == 1:
-            if num_samples > 1:
-                ax = axes[col]
-            else:
-                ax = axes
-        else:
-            ax = axes[row][col]
-        
-        if not isinstance(ax, list):
-            ax.imshow(img, cmap='gray' if img.ndim == 2 else None)
-            ax.axis('off')
-            ax.set_title(f'Lon: {coords_np[i, 0]:.2f}°, Lat: {coords_np[i, 1]:.2f}°')
-    
+
+        ax.imshow(img, cmap='gray' if img.ndim == 2 else None)
+        ax.axis('off')
+        ax.set_title(f'Lon: {coords_np[i, 0]:.2f}°, Lat: {coords_np[i, 1]:.2f}°')
+
     # Hide unused subplots
     for i in range(num_samples, rows * cols):
         row = i // cols
         col = i % cols
-        if rows == 1:
-            if num_samples > 1:
-                ax = axes[col]
-            else:
-                ax = axes
-        else:
-            ax = axes[row][col]
-        if not isinstance(ax, list):
-            ax.axis('off')
+        axes[row][col].axis('off')
     
     
     

@@ -134,87 +134,9 @@ class LocationRegressor(nn.Module):
         return x
 
 
-class AutoEncoder(nn.Module):
-    """
-    Autoencoder for learning compressed representations of satellite images.
-    """
-    
-    def __init__(
-        self,
-        input_channels: Optional[int] = None,
-        encoded_dim: int = 128,
-        dropout_rate: float = 0.2,
-        config=None
-    ):
-        super(AutoEncoder, self).__init__()
-        
-        # Handle config object or individual parameters
-        if config is not None:
-            self.input_channels = config.input_channels
-            self.encoded_dim = encoded_dim
-        else:
-            if input_channels is None:
-                input_channels = 1  # Default grayscale
-            self.input_channels = input_channels
-            self.encoded_dim = encoded_dim
-        
-        # Encoder
-        self.encoder = nn.Sequential(
-            nn.Conv2d(self.input_channels, 32, 3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2),
-            nn.Conv2d(32, 64, 3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2),
-            nn.Conv2d(64, 128, 3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2),
-            nn.Flatten(),
-            nn.Linear(8 * 8 * 128, 512),
-            nn.ReLU(),
-            nn.Dropout(dropout_rate),
-            nn.Linear(512, encoded_dim)
-        )
-        
-        # Decoder
-        self.decoder = nn.Sequential(
-            nn.Linear(self.encoded_dim, 512),
-            nn.ReLU(),
-            nn.Dropout(dropout_rate),
-            nn.Linear(512, 8 * 8 * 128),
-            nn.ReLU(),
-            nn.Unflatten(1, (128, 8, 8)),
-            nn.ConvTranspose2d(128, 64, 2, stride=2),
-            nn.ReLU(),
-            nn.ConvTranspose2d(64, 32, 2, stride=2),
-            nn.ReLU(),
-            nn.ConvTranspose2d(32, self.input_channels, 2, stride=2),
-            nn.Sigmoid()
-        )
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass through autoencoder."""
-        encoded = self.encoder(x)
-        decoded = self.decoder(encoded)
-        return decoded
-    
-    def encode(self, x: torch.Tensor) -> torch.Tensor:
-        """Encode input to latent space."""
-        return self.encoder(x)
-    
-    def decode(self, z: torch.Tensor) -> torch.Tensor:
-        """Decode from latent space."""
-        return self.decoder(z)
-
-
 def create_location_regressor(config) -> LocationRegressor:
     """Create a LocationRegressor model from configuration."""
     return LocationRegressor(config=config.model)
-
-
-def create_autoencoder(config) -> AutoEncoder:
-    """Create an AutoEncoder model from configuration."""
-    return AutoEncoder(config=config.model)
 
 
 def count_parameters(model: nn.Module) -> int:

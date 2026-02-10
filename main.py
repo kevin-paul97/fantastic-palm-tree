@@ -10,8 +10,8 @@ from pathlib import Path
 from config import Config
 from data import EPICDataDownloader, CoordinateExtractor
 from datasets import create_dataloaders
-from models import create_location_regressor, create_autoencoder
-from training import UnifiedTrainer, LocationRegressorTrainer, AutoEncoderTrainer
+from models import create_location_regressor
+from training import LocationRegressorTrainer
 from visualization import (
     plot_coordinate_distribution,
     plot_world_map_with_coordinates,
@@ -42,7 +42,7 @@ def setup_data_pipeline(config):
     # Download daily data if needed
     if not Path(config.data.images_dir).exists():
         logger.info("Downloading daily data...")
-        downloader.download_all_images()
+        downloader.download_recent(7)
     
     logger.info("Data pipeline setup complete!")
     
@@ -73,14 +73,10 @@ def train_model(config, model_type: str = "regressor"):
     logger.info(f"Training {model_type} model...")
     
     # Create model and data
-    if model_type == "regressor":
-        model = create_location_regressor(config)
-        trainer_class = LocationRegressorTrainer
-    elif model_type == "autoencoder":
-        model = create_autoencoder(config)
-        trainer_class = AutoEncoderTrainer
-    else:
+    if model_type != "regressor":
         raise ValueError(f"Unknown model type: {model_type}")
+    model = create_location_regressor(config)
+    trainer_class = LocationRegressorTrainer
     
     # Create dataloaders
     train_loader, val_loader, test_loader = create_dataloaders(config)
@@ -128,31 +124,30 @@ def evaluate_model_performance(config, model_path: str):
     
     # Handle PyTorch 2.6+ weights_only security
     try:
-        # Try loading with new security default
-        model.load_state_dict(torch.load(model_path, map_location=config.training.device))
+        # Try loading as checkpoint first (most common case)
+        checkpoint = torch.load(model_path, map_location=config.training.device, weights_only=False)
+        if 'model_state_dict' in checkpoint:
+            model.load_state_dict(checkpoint['model_state_dict'])
+            logger.info("Loaded model checkpoint successfully")
+        else:
+            # Checkpoint doesn't have model_state_dict, treat entire checkpoint as weights
+            model.load_state_dict(checkpoint)
+            logger.info("Loaded model weights successfully")
     except Exception as e:
         if "weights_only" in str(e):
-            # Fallback for PyTorch 2.6+ - load full checkpoint with weights_only=False
+            # Fallback for PyTorch 2.6+ security restrictions
             try:
-                checkpoint = torch.load(model_path, map_location=config.training.device, weights_only=False)
+                torch.serialization.add_safe_globals([Config])
+                checkpoint = torch.load(model_path, map_location=config.training.device)
                 if 'model_state_dict' in checkpoint:
                     model.load_state_dict(checkpoint['model_state_dict'])
                 else:
                     model.load_state_dict(checkpoint)
-                logger.info("Loaded model checkpoint successfully (weights_only=False fallback)")
+                logger.info("Loaded model checkpoint successfully (safe globals fallback)")
             except Exception as fallback_e:
-                # Try adding safe globals for Config
-                try:
-                    torch.serialization.add_safe_globals([Config])
-                    checkpoint = torch.load(model_path, map_location=config.training.device)
-                    if 'model_state_dict' in checkpoint:
-                        model.load_state_dict(checkpoint['model_state_dict'])
-                    else:
-                        model.load_state_dict(checkpoint)
-                    logger.info("Loaded model checkpoint successfully (safe globals fallback)")
-                except Exception as safe_e:
-                    raise Exception(f"Failed to load model with all fallbacks: {e}, {fallback_e}, {safe_e}")
+                raise Exception(f"Failed to load model: {e}, {fallback_e}")
         else:
+            # Original exception wasn't weights_only related, re-raise it
             raise e
     
     _, _, test_loader = create_dataloaders(config)
@@ -176,29 +171,12 @@ def evaluate_model_performance(config, model_path: str):
     return metrics
 
 
-def download_data(config, mode: str = "recent", num_days: int = 7, num_images: int = 100):
-    """Consolidated data download function."""
-    logger.info(f"Downloading data in {mode} mode...")
+def download_data(config, num_days: int = 7):
+    """Download recent satellite images from the last N days."""
+    logger.info(f"Downloading images from last {num_days} days...")
     
     downloader = EPICDataDownloader(config)
-    
-    if mode == "recent":
-        # Download recent days
-        logger.info(f"Downloading images from last {num_days} days...")
-        downloader.download_recent_images(num_days)
-        
-    elif mode == "latest":
-        # Download latest images
-        logger.info(f"Downloading {num_images} latest images...")
-        downloader.download_latest_images(num_images)
-        
-    elif mode == "all":
-        # Download all available data
-        logger.info("Downloading all available images...")
-        downloader.download_all_images()
-    
-    else:
-        raise ValueError(f"Unknown download mode: {mode}")
+    downloader.download_recent(num_days)
     
     logger.info("Download complete!")
 
@@ -209,13 +187,12 @@ def main():
         description="Satellite Image Coordinate Prediction - Consolidated Interface",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
+ Examples:
   %(prog)s setup                    # Setup complete data pipeline
   %(prog)s train regressor          # Train location regressor
-  %(prog)s train autoencoder        # Train autoencoder
   %(prog)s evaluate model.pth       # Evaluate trained model
-  %(prog)s download recent 7        # Download last 7 days
-  %(prog)s download latest 50       # Download 50 latest images
+  %(prog)s download 7               # Download last 7 days
+  %(prog)s download 30              # Download last 30 days
         """
     )
     
@@ -226,9 +203,9 @@ Examples:
     
     # Command-specific arguments
     parser.add_argument("target", nargs="?",
-                       help="Target for command (model type or download mode)")
+                       help="Target for command (model type, model path, or number of days)")
     parser.add_argument("value", nargs="?", type=int,
-                       help="Value for command (days/images count)")
+                       help="Deprecated: use target instead")
     
     # Configuration and overrides
     parser.add_argument("--config", type=str, help="Path to config file")
@@ -274,8 +251,8 @@ Examples:
             setup_data_pipeline(config)
             
         elif args.command == "train":
-            if not args.target or args.target not in ["regressor", "autoencoder"]:
-                raise ValueError("Training requires specifying 'regressor' or 'autoencoder'")
+            if not args.target or args.target != "regressor":
+                raise ValueError("Training requires specifying 'regressor'")
             train_model(config, args.target)
             
         elif args.command == "evaluate":
@@ -284,12 +261,8 @@ Examples:
             evaluate_model_performance(config, args.target)
             
         elif args.command == "download":
-            if not args.target or args.target not in ["recent", "latest", "all"]:
-                raise ValueError("Download requires specifying 'recent', 'latest', or 'all'")
-            
-            num_days = args.value if args.value else 7
-            num_images = args.value if args.value else 100
-            download_data(config, args.target, num_days, num_images)
+            num_days = int(args.target) if args.target else 7
+            download_data(config, num_days)
             
     except Exception as e:
         logger.error(f"Command failed: {e}")

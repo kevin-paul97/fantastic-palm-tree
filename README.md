@@ -21,14 +21,13 @@ Optional: `basemap` (world map plots), `seaborn`, `psutil`
 # Download metadata and set up data pipeline
 python main.py setup
 
-# Download satellite images
-python main.py download recent 7       # last 7 days
-python main.py download latest 50      # 50 latest images
-python main.py download all            # everything
+# Download recent satellite images
+python main.py download 7              # last 7 days (default)
+python main.py download 30             # last 30 days
 
 # Train models
 python main.py train regressor         # coordinate prediction CNN
-python main.py train autoencoder       # image autoencoder
+python main.py train regressor --epochs 50    # custom epoch count
 
 # Evaluate a trained model
 python main.py evaluate models/best_model.pth
@@ -52,11 +51,11 @@ python test_predictions.py --model_path models/best_model.pth --num_samples 6
 ## Project Structure
 
 ```
-main.py                 CLI entry point
+main.py                 CLI entry point with simplified download interface
 config.py               Configuration (data, model, training)
-models.py               LocationRegressor CNN + AutoEncoder
+models.py               LocationRegressor CNN with improved checkpoint loading
 training.py             Unified trainer with TensorBoard logging
-data.py                 NASA EPIC API client + image downloader
+data.py                 NASA EPIC API client + recent image downloader
 datasets.py             PyTorch Dataset + DataLoader + CoordinateNormalizer
 visualization.py        Plotting (distributions, world maps, training curves)
 evaluation_reporter.py  Evaluation metrics + report generation (JSON/MD/CSV)
@@ -88,6 +87,12 @@ Default config is defined in `config.py`. Override via CLI flags or a JSON confi
 ```
 
 Device is auto-detected: CUDA > MPS (Apple Silicon) > CPU.
+
+## Recent Updates
+
+- **Simplified Download Interface**: Removed complex download modes, now only supports downloading recent images by day count
+- **Improved Model Loading**: Fixed checkpoint loading issues for PyTorch 2.6+ compatibility
+- **Enhanced Error Handling**: Better fallback mechanisms for model loading and API requests
 
 ## TensorBoard
 
