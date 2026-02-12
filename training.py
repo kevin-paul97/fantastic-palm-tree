@@ -132,8 +132,7 @@ class UnifiedTrainer:
 
             self.writer = SummaryWriter(log_dir=self.tensorboard_run_dir)
 
-            # Log hparams and model architecture once at init
-            self._log_hparams()
+            # Log model architecture once at init; hparams logged after training
             self.writer.add_text('model/architecture', f"```\n{self.model}\n```")
 
             if self.config.training.launch_tensorboard:
@@ -144,8 +143,8 @@ class UnifiedTrainer:
             logger.error(f"Failed to initialize TensorBoard: {e}")
             self.writer = None
 
-    def _log_hparams(self):
-        """Log hyperparameters as a single dict to TensorBoard."""
+    def _log_hparams(self, metrics: Dict[str, float]):
+        """Log hyperparameters with final training metrics to TensorBoard."""
         if self.writer is None:
             return
         hparams = {
@@ -164,7 +163,7 @@ class UnifiedTrainer:
         }
         self.writer.add_hparams(
             hparam_dict=hparams,
-            metric_dict={},
+            metric_dict=metrics,
             run_name='.',
         )
 
@@ -268,6 +267,13 @@ class UnifiedTrainer:
             )
 
         logger.info('Training complete!')
+
+        # Log hparams with final metrics so TensorBoard can compare runs
+        self._log_hparams({
+            'hparam/best_val_loss': self.best_val_loss,
+            'hparam/final_train_loss': self.train_losses[-1],
+            'hparam/final_val_loss': self.val_losses[-1],
+        })
 
         if self.writer is not None:
             self.writer.flush()

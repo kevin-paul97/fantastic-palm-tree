@@ -16,7 +16,6 @@ except ImportError:
     sns = None
 from pathlib import Path
 
-from datasets import CoordinateNormalizer
 
 
 def plot_coordinate_distribution(
@@ -136,14 +135,9 @@ def plot_coordinate_predictions(
     show_plot: bool = True
 ) -> None:
     """Plot true vs predicted coordinates with error metrics."""
-    # Convert to numpy and denormalize
-    normalizer = CoordinateNormalizer()
-    
-    # Denormalize coordinates (assuming inputs are normalized)
-    true_coords_denorm = normalizer.denormalize(true_coords)
-    pred_coords_denorm = normalizer.denormalize(pred_coords)
-    true_coords_np = true_coords_denorm.cpu().numpy()
-    pred_coords_np = pred_coords_denorm.cpu().numpy()
+    # Coordinates are already in raw [lon, lat] degrees
+    true_coords_np = true_coords.cpu().numpy()
+    pred_coords_np = pred_coords.cpu().numpy()
     
     # Calculate longitude errors with wraparound handling
     lon_direct_diff = np.abs(true_coords_np[:, 0] - pred_coords_np[:, 0])
@@ -208,25 +202,16 @@ def plot_error_distribution(
     show_plot: bool = True
 ) -> None:
     """Plot distribution of coordinate prediction errors."""
-    # Convert to numpy and denormalize
-    normalizer = CoordinateNormalizer()
-    
-    # Convert tensors to numpy if needed
+    # Coordinates are already in raw [lon, lat] degrees
     if isinstance(true_coords, torch.Tensor):
         true_coords_np = true_coords.cpu().numpy()
     else:
         true_coords_np = true_coords
-        
+
     if isinstance(pred_coords, torch.Tensor):
         pred_coords_np = pred_coords.cpu().numpy()
     else:
         pred_coords_np = pred_coords
-    
-    # Denormalize coordinates (assuming inputs are normalized)
-    true_coords_denorm = normalizer.denormalize(true_coords)
-    pred_coords_denorm = normalizer.denormalize(pred_coords)
-    true_coords_np = true_coords_denorm.cpu().numpy()
-    pred_coords_np = pred_coords_denorm.cpu().numpy()
     
     # Use proper longitude error calculation
     lon_errors = np.abs(true_coords_np[:, 0] - pred_coords_np[:, 0])
@@ -307,9 +292,8 @@ def visualize_sample_images(
     show_plot: bool = True
 ) -> None:
     """Visualize sample satellite images with their coordinates."""
-    # Denormalize coordinates
-    normalizer = CoordinateNormalizer()
-    coords_np = normalizer.denormalize(coords).cpu().numpy()
+    # Coordinates are already in raw [lon, lat] degrees
+    coords_np = coords.cpu().numpy()
     
     # Select random samples
     if len(images) > num_samples:
@@ -363,14 +347,9 @@ def plot_predictions_on_world_map(
     max_points: int = 1000
 ) -> None:
     """Plot prediction errors on world map for geographic error analysis."""
-    # Convert to numpy and denormalize
-    normalizer = CoordinateNormalizer()
-    
-    # Denormalize coordinates (assuming inputs are normalized)
-    true_coords_denorm = normalizer.denormalize(true_coords)
-    pred_coords_denorm = normalizer.denormalize(pred_coords)
-    true_coords_np = true_coords_denorm.cpu().numpy()
-    pred_coords_np = pred_coords_denorm.cpu().numpy()
+    # Coordinates are already in raw [lon, lat] degrees
+    true_coords_np = true_coords.cpu().numpy()
+    pred_coords_np = pred_coords.cpu().numpy()
     
     # Calculate errors
     lon_errors = np.abs(true_coords_np[:, 0] - pred_coords_np[:, 0])

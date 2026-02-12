@@ -32,14 +32,13 @@ class EvaluationReporter:
     ) -> str:
         """Generate comprehensive evaluation report."""
         
-        # Initialize coordinate normalizer
+        # Both predictions and targets are in raw [lon, lat] coordinates
         normalizer = CoordinateNormalizer()
-        
-        # Denormalize predictions
-        pred_coords = normalizer.denormalize(all_predictions)
-        true_coords = all_targets  # Already in real-world coordinates
-        
-        # Calculate all metrics
+
+        pred_coords = all_predictions
+        true_coords = all_targets
+
+        # Calculate all metrics (inputs are raw coordinates in degrees)
         coord_errors = normalizer.compute_coordinate_error_degrees(pred_coords, true_coords)
         haversine_distances = normalizer.compute_haversine_distance(pred_coords, true_coords)
         lon_errors = normalizer.compute_longitude_error(pred_coords[:, 0], true_coords[:, 0])

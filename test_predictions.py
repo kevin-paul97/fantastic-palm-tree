@@ -15,8 +15,10 @@ import numpy as np
 from pathlib import Path
 import logging
 
+from PIL import Image
+
 from config import Config
-from datasets import create_dataloaders, CoordinateNormalizer
+from datasets import create_dataloaders
 from models import create_location_regressor
 
 logging.basicConfig(level=logging.INFO)
@@ -39,7 +41,11 @@ def load_model(config, model_path: str):
 
 
 def predict_single_image(model, image, true_coords, config):
-    """Predict coordinates for a single image."""
+    """Predict coordinates for a single image.
+
+    The model outputs raw [lon, lat] coordinates (same space as training targets),
+    so no denormalization is needed.
+    """
     device = torch.device(config.training.device)
 
     if len(image.shape) == 3:
@@ -51,13 +57,10 @@ def predict_single_image(model, image, true_coords, config):
     with torch.no_grad():
         prediction = model(image)
 
-    normalizer = CoordinateNormalizer()
-    pred_coords = normalizer.denormalize(prediction)
+    pred_coords_np = prediction.squeeze().cpu().numpy()
+    true_coords_np = true_coords.squeeze().cpu().numpy()
 
-    true_coords_denorm = true_coords.squeeze().cpu().numpy()
-    pred_coords_np = pred_coords.squeeze().cpu().numpy()
-
-    return pred_coords_np, true_coords_denorm
+    return pred_coords_np, true_coords_np
 
 
 def haversine_km(coord1, coord2):
@@ -78,16 +81,19 @@ def haversine_km(coord1, coord2):
     return 6371.0 * c
 
 
-def plot_single(image_tensor, true_coords, pred_coords, save_path=None, show_plot=True):
+def load_original_image(image_path):
+    """Load the original full-size RGB image from disk."""
+    return np.array(Image.open(image_path).convert('RGB'))
+
+
+def plot_single(image_np, true_coords, pred_coords, save_path=None, show_plot=True):
     """Plot image alongside prediction on world map."""
-    img_np = image_tensor.squeeze().cpu().numpy()
-    if img_np.ndim == 3:
-        img_np = np.transpose(img_np, (1, 2, 0))
+    img_np = image_np
 
     fig = plt.figure(figsize=(16, 8))
 
     ax1 = plt.subplot(1, 2, 1)
-    ax1.imshow(img_np, cmap='gray' if img_np.ndim == 2 else None)
+    ax1.imshow(img_np)
     ax1.set_title('Satellite Image')
     ax1.axis('off')
 
@@ -141,10 +147,8 @@ def plot_multiple(images, true_list, pred_list, save_path=None, show_plot=True):
 
     for i in range(n):
         ax_img = plt.subplot(rows, cols * 2, i * 2 + 1)
-        img_np = images[i].squeeze().cpu().numpy()
-        if img_np.ndim == 3:
-            img_np = np.transpose(img_np, (1, 2, 0))
-        ax_img.imshow(img_np, cmap='gray' if img_np.ndim == 2 else None)
+        img_np = images[i]
+        ax_img.imshow(img_np)
         ax_img.set_title(f'Image {i + 1}')
         ax_img.axis('off')
 
@@ -246,21 +250,25 @@ def main():
     model = load_model(config, args.model_path)
     _, _, test_loader = create_dataloaders(config, batch_size=1, num_workers=0)
 
-    all_data = list(test_loader)
-    random.shuffle(all_data)
-    samples = all_data[:args.num_samples]
+    # Access the underlying dataset to get image file paths for full-size display
+    test_dataset = test_loader.dataset
+    indices = list(range(len(test_dataset)))
+    random.shuffle(indices)
+    indices = indices[:args.num_samples]
 
     images, true_list, pred_list = [], [], []
 
-    for i, (image, true_coords) in enumerate(samples):
-        pred, true_denorm = predict_single_image(model, image, true_coords, config)
-        images.append(image.squeeze())
-        true_list.append(true_denorm)
+    for i, idx in enumerate(indices):
+        image_path = test_dataset.samples[idx][0]
+        image_tensor, true_coords = test_dataset[idx]
+        pred, true_np = predict_single_image(model, image_tensor, true_coords, config)
+        images.append(load_original_image(image_path))
+        true_list.append(true_np)
         pred_list.append(pred)
 
-        error_km = haversine_km(true_denorm, pred)
-        error_deg = np.sqrt((true_denorm[0] - pred[0]) ** 2 + (true_denorm[1] - pred[1]) ** 2)
-        print(f"Sample {i + 1}: True=({true_denorm[0]:.2f}, {true_denorm[1]:.2f})  "
+        error_km = haversine_km(true_np, pred)
+        error_deg = np.sqrt((true_np[0] - pred[0]) ** 2 + (true_np[1] - pred[1]) ** 2)
+        print(f"Sample {i + 1}: True=({true_np[0]:.2f}, {true_np[1]:.2f})  "
               f"Pred=({pred[0]:.2f}, {pred[1]:.2f})  Error={error_km:.1f} km ({error_deg:.3f} deg)")
 
     output_dir = Path(args.output_dir)
