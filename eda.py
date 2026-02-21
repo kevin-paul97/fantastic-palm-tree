@@ -17,6 +17,8 @@ from typing import Tuple, Dict
 
 from scipy import stats as scipy_stats
 from sklearn.decomposition import PCA
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -131,6 +133,45 @@ def compute_pca(images: np.ndarray) -> Dict:
     }
 
 
+def compute_kmeans(images: np.ndarray, pca_results: Dict, k_range=(2, 9)) -> Dict:
+    """Run K-Means clustering, selecting optimal K via silhouette score."""
+    N = images.shape[0]
+    flat = images.reshape(N, -1).astype(np.float64)
+
+    k_min, k_max = k_range
+    ks = list(range(k_min, k_max))
+    inertias = []
+    silhouettes = []
+
+    pca_2d = pca_results["pca_2d"]
+
+    for k in ks:
+        km = KMeans(n_clusters=k, random_state=42, n_init=10)
+        labels = km.fit_predict(flat)
+        inertias.append(float(km.inertia_))
+        silhouettes.append(float(silhouette_score(pca_2d, labels, sample_size=min(5000, N))))
+        logger.info(f"  K={k}: inertia={km.inertia_:.0f}, silhouette={silhouettes[-1]:.3f}")
+
+    best_idx = int(np.argmax(silhouettes))
+    best_k = ks[best_idx]
+    logger.info(f"Best K={best_k} (silhouette={silhouettes[best_idx]:.3f})")
+
+    # Refit with best K
+    km_best = KMeans(n_clusters=best_k, random_state=42, n_init=10)
+    labels = km_best.fit_predict(flat)
+    centers = km_best.cluster_centers_  # (K, C*H*W)
+
+    return {
+        "labels": labels,
+        "centers": centers,
+        "best_k": best_k,
+        "ks": ks,
+        "inertias": inertias,
+        "silhouettes": silhouettes,
+        "best_silhouette": silhouettes[best_idx],
+    }
+
+
 def compute_correlations(
     image_stats: Dict, coords: np.ndarray, pca_results: Dict
 ) -> Dict:
@@ -160,6 +201,7 @@ def log_to_tensorboard(
     coord_stats: Dict,
     pca_results: Dict,
     corr_results: Dict,
+    kmeans_results: Dict,
     n_samples: int,
     config: Config,
 ) -> None:
@@ -197,6 +239,14 @@ def log_to_tensorboard(
         writer.add_scalar(f"eda/correlation/{name}_r", vals["r"], 0)
         writer.add_scalar(f"eda/correlation/{name}_p", vals["p"], 0)
 
+    # K-Means
+    writer.add_scalar("eda/kmeans/best_k", kmeans_results["best_k"], 0)
+    writer.add_scalar("eda/kmeans/best_silhouette", kmeans_results["best_silhouette"], 0)
+    for i, (k, inertia, sil) in enumerate(zip(
+            kmeans_results["ks"], kmeans_results["inertias"], kmeans_results["silhouettes"])):
+        writer.add_scalar("eda/kmeans/inertia", inertia, k)
+        writer.add_scalar("eda/kmeans/silhouette", sil, k)
+
     # Mean image
     mean_img = image_stats["mean_image"]
     if mean_img.ndim == 3 and mean_img.shape[0] == 1:
@@ -230,10 +280,11 @@ def create_overview_figure(
     coord_stats: Dict,
     pca_results: Dict,
     corr_results: Dict,
+    kmeans_results: Dict,
     save_path: str,
 ) -> None:
-    """Create a single large overview figure with 4x4 subplots."""
-    fig, axes = plt.subplots(4, 4, figsize=(24, 20))
+    """Create a single large overview figure with 5x4 subplots."""
+    fig, axes = plt.subplots(5, 4, figsize=(24, 25))
     fig.suptitle(
         "Exploratory Data Analysis — Satellite Image Coordinate Prediction",
         fontsize=16, fontweight="bold", y=0.98,
@@ -436,11 +487,72 @@ def create_overview_figure(
     table.set_fontsize(9)
     table.scale(1.0, 1.4)
 
+    # ── Row 4: K-Means Clustering ─────────────────────────────────────
+    labels = kmeans_results["labels"]
+    best_k = kmeans_results["best_k"]
+    cluster_colors = plt.cm.tab10(np.linspace(0, 1, best_k))
+
+    # (4,0) Elbow + Silhouette curves
+    ax = axes[4, 0]
+    ks = kmeans_results["ks"]
+    ax2 = ax.twinx()
+    ax.plot(ks, kmeans_results["inertias"], "o-", color="#4C72B0", lw=2, label="Inertia")
+    ax2.plot(ks, kmeans_results["silhouettes"], "s-", color="#DD8452", lw=2, label="Silhouette")
+    ax.axvline(best_k, color="red", ls="--", lw=1.5, alpha=0.7, label=f"Best K={best_k}")
+    ax.set_title("K-Means: Elbow & Silhouette")
+    ax.set_xlabel("K")
+    ax.set_ylabel("Inertia", color="#4C72B0")
+    ax2.set_ylabel("Silhouette Score", color="#DD8452")
+    ax.legend(loc="upper left", fontsize=8)
+    ax2.legend(loc="upper right", fontsize=8)
+
+    # (4,1) PCA colored by cluster
+    ax = axes[4, 1]
+    for c in range(best_k):
+        mask = labels == c
+        ax.scatter(pca_2d[mask, 0], pca_2d[mask, 1], s=4, alpha=0.4,
+                   color=cluster_colors[c], label=f"C{c} (n={mask.sum()})")
+    ax.set_title(f"PCA by K-Means Cluster (K={best_k})")
+    ax.set_xlabel("PC1")
+    ax.set_ylabel("PC2")
+    ax.legend(fontsize=7, markerscale=3, loc="best")
+
+    # (4,2) Lon/Lat colored by cluster
+    ax = axes[4, 2]
+    for c in range(best_k):
+        mask = labels == c
+        ax.scatter(coords[mask, 0], coords[mask, 1], s=4, alpha=0.4,
+                   color=cluster_colors[c], label=f"C{c}")
+    ax.set_title("Geographic Distribution by Cluster")
+    ax.set_xlabel("Longitude")
+    ax.set_ylabel("Latitude")
+    ax.grid(True, alpha=0.3)
+    ax.legend(fontsize=7, markerscale=3, loc="best")
+
+    # (4,3) Cluster centers as images
+    ax = axes[4, 3]
+    centers = kmeans_results["centers"]
+    center_imgs = centers.reshape(best_k, C, H, W)
+    # Tile cluster center images horizontally
+    if C == 1:
+        tiles = [center_imgs[c, 0] for c in range(best_k)]
+    else:
+        tiles = [center_imgs[c].transpose(1, 2, 0) for c in range(best_k)]
+    tile_row = np.concatenate(tiles, axis=1)
+    ax.imshow(tile_row, cmap="gray")
+    # Add cluster labels
+    for c in range(best_k):
+        ax.text(c * W + W / 2, -2, f"C{c}", ha="center", fontsize=9, fontweight="bold",
+                color=cluster_colors[c])
+    ax.set_title("Cluster Centers")
+    ax.axis("off")
+
     # Footer
     mode = "Grayscale" if C == 1 else "RGB"
     fig.text(0.5, 0.01,
              f"N = {N} samples  |  Image size: {H}x{W}  |  {mode}  |  "
-             f"PCA explained variance: {pca_results['total_explained_variance']*100:.1f}%",
+             f"PCA explained variance: {pca_results['total_explained_variance']*100:.1f}%  |  "
+             f"K-Means K={best_k} (silhouette={kmeans_results['best_silhouette']:.3f})",
              ha="center", fontsize=11, style="italic")
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.96])
@@ -480,16 +592,20 @@ def main():
     logger.info("Computing correlations...")
     corr_results = compute_correlations(image_stats, coords, pca_results)
 
+    # K-Means clustering
+    logger.info("Running K-Means clustering (K=2..8)...")
+    kmeans_results = compute_kmeans(images, pca_results)
+
     # TensorBoard
     logger.info("Logging to TensorBoard...")
     log_to_tensorboard(image_stats, coord_stats, pca_results, corr_results,
-                       len(images), config)
+                       kmeans_results, len(images), config)
 
     # Overview figure
     logger.info("Creating overview figure...")
     save_path = "outputs/eda_overview.png"
     create_overview_figure(images, coords, image_stats, coord_stats,
-                           pca_results, corr_results, save_path)
+                           pca_results, corr_results, kmeans_results, save_path)
 
     # Print summary
     print("\n" + "=" * 60)
@@ -506,6 +622,11 @@ def main():
     print(f"PCA explained:    {pca_results['total_explained_variance']*100:.1f}%"
           f"  (PC1={pca_results['explained_variance_ratio'][0]*100:.1f}%,"
           f" PC2={pca_results['explained_variance_ratio'][1]*100:.1f}%)")
+
+    print(f"K-Means K:        {kmeans_results['best_k']}"
+          f"  (silhouette={kmeans_results['best_silhouette']:.3f})")
+    cluster_sizes = np.bincount(kmeans_results["labels"])
+    print(f"Cluster sizes:    {', '.join(f'C{i}={s}' for i, s in enumerate(cluster_sizes))}")
 
     # Find strongest correlation
     best_key = max(corr_results, key=lambda k: abs(corr_results[k]["r"]))

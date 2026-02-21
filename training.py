@@ -135,6 +135,17 @@ class UnifiedTrainer:
             # Log model architecture once at init; hparams logged after training
             self.writer.add_text('model/architecture', f"```\n{self.model}\n```")
 
+            # Log computational graph
+            try:
+                dummy_input = torch.zeros(
+                    1, self.config.model.input_channels,
+                    self.config.data.image_size, self.config.data.image_size,
+                ).to(self.device)
+                self.writer.add_graph(self.model, dummy_input)
+                logger.info("Model graph logged to TensorBoard")
+            except Exception as e:
+                logger.warning(f"Failed to log model graph: {e}")
+
             if self.config.training.launch_tensorboard:
                 self._launch_tensorboard()
 
@@ -166,6 +177,50 @@ class UnifiedTrainer:
             metric_dict=metrics,
             run_name='.',
         )
+
+    def _log_embeddings(self):
+        """Log model embeddings from the validation set to TensorBoard."""
+        if self.writer is None:
+            return
+
+        self.model.eval()
+        all_embeddings = []
+        all_labels = []
+        all_images = []
+
+        with torch.no_grad():
+            for images, targets in self.val_loader:
+                images = images.to(self.device)
+                embeddings = self.model.get_embeddings(images)
+                all_embeddings.append(embeddings.cpu())
+                all_labels.append(targets)
+                all_images.append(images.cpu())
+
+        all_embeddings = torch.cat(all_embeddings, dim=0)
+        all_labels = torch.cat(all_labels, dim=0)
+        all_images = torch.cat(all_images, dim=0)
+
+        # Build metadata: lon, lat per sample
+        metadata = [
+            [f"{lon:.1f}", f"{lat:.1f}"]
+            for lon, lat in all_labels.tolist()
+        ]
+        metadata_header = ["longitude", "latitude"]
+
+        # Normalize images to [0,1] for thumbnails; expand grayscale to 3-ch
+        label_img = all_images
+        if label_img.shape[1] == 1:
+            label_img = label_img.repeat(1, 3, 1, 1)
+
+        self.writer.add_embedding(
+            all_embeddings,
+            metadata=metadata,
+            metadata_header=metadata_header,
+            label_img=label_img,
+            global_step=self.current_epoch,
+            tag="model_embeddings",
+        )
+        logger.info(f"Logged {len(all_embeddings)} embeddings to TensorBoard")
 
     def _launch_tensorboard(self):
         try:
@@ -267,6 +322,9 @@ class UnifiedTrainer:
             )
 
         logger.info('Training complete!')
+
+        # Log model embeddings for TensorBoard projector
+        self._log_embeddings()
 
         # Log hparams with final metrics so TensorBoard can compare runs
         self._log_hparams({

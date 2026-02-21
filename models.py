@@ -119,18 +119,28 @@ class LocationRegressor(nn.Module):
         
         return h * w * self.conv_channels[-1]
     
+    def get_embeddings(self, x: torch.Tensor) -> torch.Tensor:
+        """Extract hidden-layer embeddings (before the final projection)."""
+        for conv_layer in self.conv_layers:
+            x = conv_layer(x)
+        x = x.view(x.size(0), -1)
+        # Run through all fc_layers except the last Linear
+        for layer in list(self.fc_layers.children())[:-1]:
+            x = layer(x)
+        return x
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass through the network."""
         # Apply convolutional layers
         for conv_layer in self.conv_layers:
             x = conv_layer(x)
-        
+
         # Flatten for fully connected layers
         x = x.view(x.size(0), -1)
-        
+
         # Apply fully connected layers
         x = self.fc_layers(x)
-        
+
         return x
 
 
