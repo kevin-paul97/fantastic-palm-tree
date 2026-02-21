@@ -29,3 +29,7 @@ EDA_Interpretation.md
 # Secrets
 api_key.txt
 .env
+
+# Devcontainer & Jupyter
+.devcontainer/
+EPIC.jupyterlab-workspace
