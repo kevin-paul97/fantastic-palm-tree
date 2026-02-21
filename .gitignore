@@ -33,3 +33,6 @@ api_key.txt
 # Devcontainer & Jupyter
 .devcontainer/
 EPIC.jupyterlab-workspace
+
+# Settings for codespace
+.vscode/settings.json
