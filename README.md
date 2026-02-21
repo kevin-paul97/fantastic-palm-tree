@@ -5,14 +5,14 @@ A PyTorch CNN that predicts geographic coordinates (latitude/longitude) from NAS
 ## Requirements
 
 ```
-torch torchvision pandas matplotlib requests pillow tqdm numpy tensorboard
+torch torchvision pandas matplotlib requests pillow tqdm numpy tensorboard aiohttp certifi scipy scikit-learn
 ```
 
 Optional: `basemap` (world map plots), `seaborn`, `psutil`
 
 ## Setup
 
-1. Install dependencies: `pip install torch torchvision pandas matplotlib requests pillow tqdm numpy tensorboard`
+1. Install dependencies: `pip install torch torchvision pandas matplotlib requests pillow tqdm numpy tensorboard aiohttp certifi scipy scikit-learn`
 2. (Optional) Set your NASA API key: `export NASA_EPIC_API_KEY="your_key_here"`
 
 ## Usage
@@ -31,6 +31,9 @@ python main.py train regressor --epochs 50
 
 # Evaluate a trained model
 python main.py evaluate models/regressor_final.pth
+
+# Run exploratory data analysis
+python eda.py
 
 # Test predictions
 python test_predictions.py --model_path models/regressor_final.pth
@@ -58,8 +61,9 @@ main.py                 CLI entry point
 config.py               Configuration (data, model, training)
 models.py               LocationRegressor CNN
 training.py             Trainer with TensorBoard logging
-data.py                 NASA EPIC API client + image downloader
+data.py                 NASA EPIC API client + async image downloader
 datasets.py             PyTorch Dataset + DataLoader + CoordinateNormalizer
+eda.py                  Exploratory data analysis (PCA, statistics, overview plot)
 visualization.py        Plotting (distributions, world maps, training curves)
 evaluation_reporter.py  Evaluation metrics + report generation (JSON/MD/CSV)
 tensorboard_utils.py    TensorBoard start/stop utilities
@@ -91,9 +95,18 @@ Default config is defined in `config.py`. Override via CLI flags or a JSON confi
 
 Device is auto-detected: CUDA > MPS (Apple Silicon) > CPU.
 
+## Exploratory Data Analysis
+
+Run `python eda.py` to generate a comprehensive 4x4 overview figure with:
+- Mean/std images, pixel and coordinate distributions
+- PCA (2 components) colored by longitude and latitude
+- Brightness-coordinate correlations and summary statistics tables
+
+Output: `outputs/eda_overview.png` + TensorBoard metrics under `logs/tensorboard/eda_*/`.
+
 ## TensorBoard
 
-Training logs are saved to `logs/tensorboard/`. View with:
+Training and EDA logs are saved to `logs/tensorboard/`. View with:
 
 ```bash
 tensorboard --logdir logs/tensorboard

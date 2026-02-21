@@ -23,6 +23,9 @@ runs/
 # OS
 .DS_Store
 
+# Docs
+EDA_Interpretation.md
+
 # Secrets
 api_key.txt
 .env

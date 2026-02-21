@@ -9,7 +9,11 @@ Endpoints:
   Images:    https://epic.gsfc.nasa.gov/archive/natural/YYYY/MM/DD/png/{name}.png
 """
 
+import asyncio
 import json
+import ssl
+import aiohttp
+import certifi
 import requests
 import pandas as pd
 from typing import List, Tuple, Optional, Dict, Any
@@ -21,6 +25,14 @@ logger = logging.getLogger(__name__)
 API_BASE = "https://epic.gsfc.nasa.gov/api/natural"
 ARCHIVE_BASE = "https://epic.gsfc.nasa.gov/archive/natural"
 
+MAX_CONCURRENT_DOWNLOADS = 10
+
+
+def _create_ssl_context() -> ssl.SSLContext:
+    """Create an SSL context using certifi's CA bundle (fixes macOS issues)."""
+    ctx = ssl.create_default_context(cafile=certifi.where())
+    return ctx
+
 
 class EPICDataDownloader:
     """Downloads metadata and images from the NASA EPIC API."""
@@ -30,7 +42,7 @@ class EPICDataDownloader:
         self.images_dir = Path(self.config.images_dir)
         self.combined_dir = Path(self.config.combined_dir)
 
-    # ── Metadata ──
+    # ── Sync helpers (single requests, used for simple one-off calls) ──
 
     def fetch_available_dates(self) -> List[str]:
         """Fetch list of all available dates from the API."""
@@ -56,15 +68,137 @@ class EPICDataDownloader:
         logger.info(f"Fetched metadata for {date}: {len(data)} images")
         return data
 
-    # ── Image downloads ──
+    # ── Async internals ──
+
+    async def _async_download_image(
+        self, session: aiohttp.ClientSession, semaphore: asyncio.Semaphore,
+        image_name: str, date: str,
+    ) -> bool:
+        """Download a single image, respecting the concurrency semaphore."""
+        if not image_name.endswith(".png"):
+            image_name = f"{image_name}.png"
+
+        date_dir = self.images_dir / date
+        image_path = date_dir / image_name
+
+        if image_path.exists():
+            return True
+
+        year, month, day = date[:4], date[5:7], date[8:10]
+        url = f"{ARCHIVE_BASE}/{year}/{month}/{day}/png/{image_name}"
+
+        try:
+            async with semaphore:
+                async with session.get(url) as resp:
+                    resp.raise_for_status()
+                    content = await resp.read()
+
+            date_dir.mkdir(parents=True, exist_ok=True)
+            with open(image_path, "wb") as f:
+                f.write(content)
+
+            logger.debug(f"Downloaded: {image_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to download {image_name}: {e}")
+            return False
+
+    async def _async_download_date_images(
+        self, session: aiohttp.ClientSession, semaphore: asyncio.Semaphore,
+        date: str,
+    ) -> Tuple[int, int]:
+        """Download all images for a date concurrently."""
+        metadata_path = self.combined_dir / f"{date}.json"
+        if metadata_path.exists():
+            with open(metadata_path) as f:
+                data = json.load(f)
+        else:
+            # Fetch metadata through the async session
+            async with semaphore:
+                async with session.get(f"{API_BASE}/date/{date}") as resp:
+                    resp.raise_for_status()
+                    data = await resp.json()
+            self.combined_dir.mkdir(parents=True, exist_ok=True)
+            with open(self.combined_dir / f"{date}.json", "w") as f:
+                json.dump(data, f)
+
+        images = [item["image"] for item in data if item.get("image")]
+        tasks = [
+            self._async_download_image(session, semaphore, name, date)
+            for name in images
+        ]
+        results = await asyncio.gather(*tasks)
+        success = sum(1 for r in results if r)
+        logger.info(f"{date}: downloaded {success}/{len(images)} images")
+        return success, len(images)
+
+    async def _async_download_recent(self, num_days: int) -> bool:
+        """Download images from the most recent N days concurrently."""
+        dates = self.fetch_available_dates()
+        recent_dates = dates[-num_days:]
+        logger.info(f"Downloading images for {len(recent_dates)} most recent dates")
+
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
+        timeout = aiohttp.ClientTimeout(total=60)
+        connector = aiohttp.TCPConnector(limit=MAX_CONCURRENT_DOWNLOADS, ssl=_create_ssl_context())
+
+        async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
+            tasks = [
+                self._async_download_date_images(session, semaphore, date)
+                for date in recent_dates
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        total_success, total_count = 0, 0
+        for r in results:
+            if isinstance(r, Exception):
+                logger.error(f"Date download failed: {r}")
+            else:
+                total_success += r[0]
+                total_count += r[1]
+
+        logger.info(f"Recent download complete: {total_success}/{total_count} images")
+        return total_success > 0
+
+    async def _async_download_metadata(self) -> bool:
+        """Download metadata for all available dates concurrently."""
+        dates = self.fetch_available_dates()
+        logger.info(f"Downloading metadata for {len(dates)} dates")
+
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
+        timeout = aiohttp.ClientTimeout(total=60)
+        connector = aiohttp.TCPConnector(limit=MAX_CONCURRENT_DOWNLOADS, ssl=_create_ssl_context())
+
+        async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
+            async def _fetch_one(date: str):
+                metadata_path = self.combined_dir / f"{date}.json"
+                if metadata_path.exists():
+                    return
+                async with semaphore:
+                    async with session.get(f"{API_BASE}/date/{date}") as resp:
+                        resp.raise_for_status()
+                        data = await resp.json()
+                self.combined_dir.mkdir(parents=True, exist_ok=True)
+                with open(metadata_path, "w") as f:
+                    json.dump(data, f)
+                logger.info(f"Fetched metadata for {date}: {len(data)} images")
+
+            tasks = [_fetch_one(date) for date in dates]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        failures = [r for r in results if isinstance(r, Exception)]
+        if failures:
+            for f in failures:
+                logger.error(f"Metadata download failed: {f}")
+            return False
+
+        logger.info("Metadata download complete")
+        return True
+
+    # ── Public sync API (callers don't need to change) ──
 
     def download_image(self, image_name: str, date: str) -> bool:
-        """Download a single image from the EPIC archive.
-
-        Args:
-            image_name: Image identifier from metadata (e.g. 'epic_1b_20150613110250').
-            date: Date string 'YYYY-MM-DD'.
-        """
+        """Download a single image (sync, for one-off use)."""
         if not image_name.endswith(".png"):
             image_name = f"{image_name}.png"
 
@@ -92,54 +226,24 @@ class EPICDataDownloader:
         return True
 
     def download_date_images(self, date: str) -> Tuple[int, int]:
-        """Download all images for a date. Fetches metadata first if needed.
+        """Download all images for a date concurrently."""
+        return asyncio.run(self._async_download_date_single(date))
 
-        Returns:
-            (success_count, total_count)
-        """
-        metadata_path = self.combined_dir / f"{date}.json"
-        if metadata_path.exists():
-            with open(metadata_path) as f:
-                data = json.load(f)
-        else:
-            data = self.fetch_date_metadata(date)
-
-        images = [item["image"] for item in data if item.get("image")]
-        success = sum(1 for name in images if self.download_image(name, date))
-        logger.info(f"{date}: downloaded {success}/{len(images)} images")
-        return success, len(images)
+    async def _async_download_date_single(self, date: str) -> Tuple[int, int]:
+        """Helper: open a session and download one date's images."""
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
+        timeout = aiohttp.ClientTimeout(total=60)
+        connector = aiohttp.TCPConnector(limit=MAX_CONCURRENT_DOWNLOADS, ssl=_create_ssl_context())
+        async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
+            return await self._async_download_date_images(session, semaphore, date)
 
     def download_metadata(self) -> bool:
-        """Download metadata for all available dates."""
-        dates = self.fetch_available_dates()
-        logger.info(f"Downloading metadata for {len(dates)} dates")
-        
-        for date in dates:
-            try:
-                self.fetch_date_metadata(date)
-            except Exception as e:
-                logger.error(f"Failed to download metadata for {date}: {e}")
-                return False
-                
-        logger.info("Metadata download complete")
-        return True
-
-    # ── Download functionality ──
+        """Download metadata for all available dates concurrently."""
+        return asyncio.run(self._async_download_metadata())
 
     def download_recent(self, num_days: int = 7) -> bool:
-        """Download images from the most recent N days."""
-        dates = self.fetch_available_dates()
-        recent_dates = dates[-num_days:]
-        logger.info(f"Downloading images for {len(recent_dates)} most recent dates")
-
-        total_success, total_count = 0, 0
-        for date in recent_dates:
-            success, count = self.download_date_images(date)
-            total_success += success
-            total_count += count
-
-        logger.info(f"Recent download complete: {total_success}/{total_count} images")
-        return total_success > 0
+        """Download images from the most recent N days concurrently."""
+        return asyncio.run(self._async_download_recent(num_days))
 
     # ── Utilities ──
 
