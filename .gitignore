@@ -1,5 +1,11 @@
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
 
 # Data
 images/
@@ -9,6 +15,7 @@ outputs/
 
 # Models
 *.pth
+models/
 
 # Media
 *.jpeg
@@ -20,8 +27,23 @@ outputs/
 logs/
 runs/
 
+# Results & generated files
+*.csv
+image_filename_mapping.json
+
 # OS
 .DS_Store
+Thumbs.db
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Claude Code
+.claude/
 
 # Docs
 EDA_Interpretation.md
@@ -29,10 +51,16 @@ EDA_Interpretation.md
 # Secrets
 api_key.txt
 .env
+*.key
 
-# Devcontainer & Jupyter
+# Jupyter
+.ipynb_checkpoints/
+*.jupyterlab-workspace
+
+# Devcontainer
 .devcontainer/
-EPIC.jupyterlab-workspace
 
-# Settings for codespace
-.vscode/settings.json
+# Virtual environments
+venv/
+.venv/
+env/
