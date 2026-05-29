@@ -117,9 +117,13 @@ def train_model(config, model_type: str = "regressor"):
         results = trainer.train()
         logger.info(f"Training complete! Best validation loss: {results['best_val_loss']:.4f}")
         
-        # Save final model as checkpoint
+        # Save final model as full checkpoint (aligned with -cl checkpoint format)
         final_model_path = os.path.join(config.training.save_dir, f"{model_type}_final.pth")
-        torch.save({'model_state_dict': model.state_dict()}, final_model_path)
+        torch.save({
+            'model_state_dict': model.state_dict(),
+            'epoch': trainer.current_epoch,
+            'best_val_loss': trainer.best_val_loss,
+        }, final_model_path)
         logger.info(f"Model saved to: {final_model_path}")
         
         return final_model_path
@@ -168,7 +172,10 @@ def evaluate_model_performance(config, model_path: str):
     
     # Create trainer for evaluation with dummy train loader
     from torch.utils.data import DataLoader, TensorDataset
-    dummy_train_data = TensorDataset(torch.zeros(1, 1, 64, 64), torch.zeros(1, 2))
+    dummy_train_data = TensorDataset(
+        torch.zeros(1, config.model.input_channels, config.data.image_size, config.data.image_size),
+        torch.zeros(1, 2),
+    )
     dummy_train_loader = DataLoader(dummy_train_data, batch_size=1)
     
     trainer = LocationRegressorTrainer(model, dummy_train_loader, test_loader, config)
@@ -181,7 +188,8 @@ def evaluate_model_performance(config, model_path: str):
     logger.info(f"  Median coordinate error: {metrics['median_coordinate_error_deg']:.4f}°")
     logger.info(f"  Mean Haversine distance: {metrics['mean_haversine_km']:.1f} km")
     logger.info(f"  Median Haversine distance: {metrics['median_haversine_km']:.1f} km")
-    
+
+    trainer.cleanup()
     return metrics
 
 

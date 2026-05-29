@@ -39,7 +39,7 @@ class LocationRegressor(nn.Module):
             if conv_channels is None:
                 conv_channels = [64, 128, 256]
             if input_channels is None:
-                input_channels = 1  # Default grayscale
+                input_channels = 3  # Default RGB (aligned with config)
             
             self.input_channels = input_channels
             self.conv_channels = conv_channels
@@ -104,7 +104,7 @@ class LocationRegressor(nn.Module):
             return nn.Tanh()
         elif self.activation == "relu":
             return nn.ReLU()
-        elif self.activation == "leaky_relu":
+        elif self.activation in ("leaky_relu", "leakyrelu"):
             return nn.LeakyReLU(0.2)
         else:
             raise ValueError(f"Unknown activation: {self.activation}")
@@ -154,7 +154,7 @@ def count_parameters(model: nn.Module) -> int:
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-def print_model_summary(model: nn.Module, input_size: tuple = (1, 1, 64, 64)):
+def print_model_summary(model: nn.Module, input_size: tuple = (1, 3, 64, 64)):
     """Print a summary of the model architecture."""
     try:
         from torchinfo import summary

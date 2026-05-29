@@ -113,6 +113,7 @@ def _draw_miller_map(ax=None):
         if ax is None:
             ax = plt.gca()
         ax = plt.subplot(projection=ccrs.Miller())
+        ax.set_global()
         ax.add_feature(cfeature.COASTLINE, linewidth=0.5)
         ax.add_feature(cfeature.BORDERS, linewidth=0.25)
         ax.add_feature(cfeature.LAND, facecolor='lightgray')
@@ -309,7 +310,7 @@ def main():
     # Access the underlying dataset to get image file paths for full-size display
     test_dataset = test_loader.dataset
     indices = list(range(len(test_dataset)))
-    random.shuffle(indices)
+    random.Random(config.training.random_seed).shuffle(indices)
     indices = indices[:args.num_samples]
 
     images, true_list, pred_list = [], [], []
