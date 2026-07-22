@@ -1,0 +1,5 @@
+# Downloaded Sentinel-2 imagery + large caches are reproducible via fetch_sentinel.py
+sentinel_data/images/
+sentinel_data/*.json
+*.log
+__pycache__/
