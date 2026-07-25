@@ -14,6 +14,7 @@ A PyTorch convolutional neural network that predicts geographic coordinates (lat
 - **Multiple output formats**: Evaluation reports in JSON, Markdown, and CSV via `EvaluationReporter`
 - **TensorBoard integration**: Training curves, model graph, hyperparameter comparison, and embedding projector
 - **Learned representation visualization**: `visualize` subcommand renders KMeans clusters of the model's 128-d test embeddings on a world map — contiguous geographic regions indicate the model has learned geography in feature space
+- **Copernicus Sentinel-2 enhancement**: `sentinel_enhancement/` is a self-contained subproject that augments the small EPIC dataset with Sentinel-2 imagery via co-training, adds a circular `(sin, cos)` longitude head, and ensembles members — cutting mean great-circle error from 1,938 km (from-scratch) to under 200 km (see `sentinel_enhancement/README.md`)
 
 ## Requirements
 
@@ -100,6 +101,7 @@ tensorboard_utils.py    TensorBoard start/stop utilities with fallback methods
 test_predictions.py     Prediction testing + world error map
 visualize_representation.py  Renders KMeans clusters of 128-d test embeddings on a world map
 cross_validate.sh       Grid search over batch size and learning rate
+sentinel_enhancement/   Sentinel-2 transfer-learning subproject (co-training, circular head, ensemble)
 ```
 
 ## Data Organization
@@ -226,3 +228,24 @@ bash cross_validate.sh
 ```
 
 Results are logged to `cross_validation_results.csv`.
+
+## Copernicus Sentinel-2 Enhancement
+
+The `sentinel_enhancement/` directory is a self-contained research subproject that improves the EPIC `LocationRegressor` by using [Copernicus Sentinel-2](https://dataspace.copernicus.eu/) imagery as an auxiliary geolocation signal. Sentinel-2's STAC catalogue exposes anonymously-downloadable true-color quicklooks, each with a precise scene-center (lon, lat) label — a large, globally-distributed dataset that the tiny local EPIC set (30 dates / ~393 images) lacks.
+
+Three ideas compound to beat the shipped model while training on ~4% of its data:
+
+1. **Co-training** — train the conv feature extractor jointly on EPIC + Sentinel-2 scenes instead of pre-train-then-fine-tune.
+2. **Circular longitude head** — regress `(sin θ, cos θ)` instead of raw longitude, removing the ±180° dateline discontinuity that caused the largest (mid-Pacific) errors.
+3. **Ensembling** — average many circular co-trained members in `(sin, cos, lat)` space so idiosyncratic per-model mistakes cancel.
+
+Result on a pinned 75-frame held-out EPIC test set: mean great-circle error drops from **1,938 km (from-scratch)** → **401 km (single circular model)** → **under 200 km (ensemble)**, versus **596 km** for the shipped model trained on the full 11-year archive.
+
+```bash
+python sentinel_enhancement/fetch_sentinel.py          # download Sentinel-2 aux data
+python sentinel_enhancement/cotrain_circular.py        # train a single circular co-trained model
+python sentinel_enhancement/ensemble.py train          # train ensemble members
+python sentinel_enhancement/ensemble.py eval           # evaluate the averaged ensemble
+```
+
+See `sentinel_enhancement/README.md` for the full method, per-lever ablation, and reproduction steps.

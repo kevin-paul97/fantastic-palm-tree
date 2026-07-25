@@ -22,6 +22,7 @@ PyTorch CNN (`LocationRegressor`) that predicts geographic coordinates (lon, lat
 | `test_predictions.py` | Single/multiple/world-error-map prediction visualization with cartopy/Basemap backend. |
 | `visualize_representation.py` | Extracts 128-d test embeddings via `model.get_embeddings()`, runs `StandardScaler + KMeans` on them, reorders cluster ids by each centroid's PC1 score for colormap continuity, and renders the clusters on a Miller-projection world map. Reuses `_draw_miller_map` / `load_model` from `test_predictions.py`; falls back to a plain matplotlib scatter when neither cartopy nor Basemap is installed. |
 | `tensorboard_utils.py` | Start/stop TensorBoard with multiple fallback methods. |
+| `sentinel_enhancement/` | Self-contained subproject that augments EPIC with Copernicus Sentinel-2 imagery. `fetch_sentinel.py` queries CDSE STAC for true-color quicklooks + scene-center coords. `cotrain_circular.py` co-trains EPIC + Sentinel with a `(sin, cos)` longitude head (removes the ±180° dateline seam). `ensemble.py` averages many circular members in `(sin, cos, lat)` space. `cotrain_v2.py`/`cotrain_resnet.py` are documented negative results (higher-res / ResNet-18 backbone plateaued). `experiment.py`/`finalize*.py`/`publish.py` handle pinned-split evaluation + reporting. Has its own `README.md`. |
 
 ## Key Design Decisions & Gotchas
 
@@ -33,6 +34,8 @@ PyTorch CNN (`LocationRegressor`) that predicts geographic coordinates (lon, lat
 - **Reproducibility**: `main._set_seed(seed)` seeds Python `random`, `numpy`, `torch`, and sets `torch.backends.cudnn.deterministic=True`, `benchmark=False`.
 - **Device auto-detection**: `Config._get_best_device()`: CUDA > MPS > CPU. Overridable via `--device` flag.
 - **Weights-only loading**: `main.evaluate_model_performance()` handles PyTorch 2.6+ `weights_only` security restriction with fallback to `add_safe_globals`.
+- **Circular longitude head (sentinel_enhancement)**: The biggest EPIC errors are longitude misses at the ±180° dateline on featureless mid-Pacific frames. Regressing raw longitude puts a discontinuity there; the enhancement predicts `(sin θ, cos θ)` instead to remove the seam. Any new longitude-aware loss/metric in that subproject must operate in circular space, not raw degrees.
+- **Sentinel-2 anonymous access**: Sentinel-2 STAC true-color quicklooks are downloadable without a CDSE OAuth token; each scene's `bbox` yields the scene-center label. No API key is required for `fetch_sentinel.py`.
 
 ## Build / Run Commands
 
@@ -76,6 +79,12 @@ python tensorboard_utils.py stop
 
 # Cross-validation grid search
 bash cross_validate.sh
+
+# Sentinel-2 enhancement subproject (see sentinel_enhancement/README.md)
+python sentinel_enhancement/fetch_sentinel.py        # download Sentinel-2 aux data
+python sentinel_enhancement/cotrain_circular.py      # single circular co-trained model
+python sentinel_enhancement/ensemble.py train        # train ensemble members
+python sentinel_enhancement/ensemble.py eval         # evaluate averaged ensemble
 ```
 
 ## Development Conventions
